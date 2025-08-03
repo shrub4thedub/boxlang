@@ -4,25 +4,124 @@
   join "\n" ${buf[*]} | run tee $file
 end
 
-[fn append]
+[fn readbuf file]
+  if exists $file
+    set buf $(cat $file)
+    len ${buf[*]}
+    set curr $_len_result
+  end
+  if not exists $file
+    set buf
+    set curr 0
+  end
+end
+
+[fn collect_lines]
+  set lines
   while true
     prompt ""
     set line $reply
     if match $line "."
-      return 0
+      break
     end
-    set buf ${buf[*]} $line
-    arith $curr + 1
-    set curr $_arith_result
+    set lines ${lines[*]} $line
   end
 end
 
+[fn insert]
+  collect_lines
+  if not ${lines[0]}
+    return 0
+  end
+
+  arith $curr - 1
+  set pos $_arith_result
+  if test $curr -eq 0
+    set pos 0
+  end
+
+  len ${buf[*]}
+  set total $_len_result
+
+  set newbuf
+  set i 0
+  while test $i -lt $total
+    if test $i -eq $pos
+      set newbuf ${newbuf[*]} ${lines[*]}
+    end
+    set newbuf ${newbuf[*]} ${buf[$i]}
+    arith $i + 1
+    set i $_arith_result
+  end
+  if test $pos -ge $total
+    set newbuf ${newbuf[*]} ${lines[*]}
+  end
+
+  set buf ${newbuf[*]}
+  len ${lines[*]}
+  set added $_len_result
+  arith $pos + $added
+  set curr $_arith_result
+end
+
+[fn append]
+  arith $curr + 1
+  set curr $_arith_result
+  insert
+end
+
+[fn delete]
+  if test $curr -eq 0
+    return 0
+  end
+
+  arith $curr - 1
+  set pos $_arith_result
+  len ${buf[*]}
+  set total $_len_result
+
+  set newbuf
+  set i 0
+  while test $i -lt $total
+    if test $i -ne $pos
+      set newbuf ${newbuf[*]} ${buf[$i]}
+    end
+    arith $i + 1
+    set i $_arith_result
+  end
+
+  set buf ${newbuf[*]}
+  len ${newbuf[*]}
+  set newtotal $_len_result
+  arith $pos + 1
+  set next $_arith_result
+  if test $next -gt $newtotal
+    set curr $newtotal
+  else
+    set curr $next
+  end
+end
+
+[fn change]
+  if test $curr -eq 0
+    return 0
+  end
+  set pos $curr
+  delete
+  arith $pos - 1
+  set curr $_arith_result
+  append
+end
+
 [main]
-  # Minimal ed implementation
+  # ed implementation in Box
+  # run with: ./box examples/ed.box [file]
   set file $1
   set buf
   set curr 0
   set reply ""
+
+  readbuf $file
 
   while true
     prompt ":"
@@ -41,8 +140,48 @@ end
       continue
     end
 
+    if match $cmd "i"
+      insert
+      continue
+    end
+
+    if match $cmd "c"
+      change
+      continue
+    end
+
+    if match $cmd "d"
+      delete
+      continue
+    end
+
+    if match $cmd "n"
+      if test $curr -gt 0
+        arith $curr - 1
+        set idx $_arith_result
+        echo "$curr\t${buf[$idx]}"
+      end
+      continue
+    end
+
     if match $cmd "p"
-      if arith $curr ">" 0
+      if test $curr -gt 0
+        arith $curr - 1
+        set idx $_arith_result
+        echo ${buf[$idx]}
+      end
+      continue
+    end
+
+    if match $cmd "="
+      echo $curr
+      continue
+    end
+
+    if match $cmd "$"
+      len ${buf[*]}
+      set curr $_len_result
+      if test $curr -gt 0
         arith $curr - 1
         set idx $_arith_result
         echo ${buf[$idx]}
@@ -52,6 +191,11 @@ end
 
     if match $cmd "w"
       writebuf $file
+      continue
+    end
+
+    if match $cmd "r"
+      readbuf $file
       continue
     end
 

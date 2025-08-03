@@ -1,0 +1,6 @@
+[main]
+  set buf "line1" "line2" "line3"
+  echo "Buffer contains: ${buf[*]}"
+  join "\n" ${buf[*]}
+  echo "Join result: $_join_result"
+end

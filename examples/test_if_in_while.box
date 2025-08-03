@@ -1,0 +1,18 @@
+[main]
+  set count 0
+  while true
+    arith $count + 1
+    set count $_arith_result
+    echo "Loop iteration: $count"
+    
+    if match $count "3"
+      echo "Found 3, breaking"
+      break
+    end
+    
+    if match $count "5"
+      echo "This should not print"
+    end
+  end
+  echo "Done"
+end

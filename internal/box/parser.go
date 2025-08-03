@@ -2,15 +2,47 @@ package box
 
 import (
 	"fmt"
-	"path"
-	"path/filepath"
+	"os"
 	"strings"
+
+	"github.com/alecthomas/participle/v2/lexer"
 )
 
+// Types needed for compatibility with existing code
+type ErrorPolicy int
+
+const (
+	FailFast ErrorPolicy = iota
+	IgnoreError
+	FallbackOnError
+	TryFallbackHalt
+)
+
+type BlockType int
+
+const (
+	MainBlock BlockType = iota
+	FuncBlock
+	DataBlock
+	CustomBlock
+)
+
+type BlockModifier struct {
+	Flag string // -c, -i, -h
+}
+
+type Import struct {
+	Path      string   // Original import path (e.g., "utils/helper.box")
+	Namespace string   // Derived namespace (e.g., "helper")
+	Program   *Program // The imported program
+}
+
+// Expr interface for compatibility
 type Expr interface {
 	String() string
 }
 
+// LiteralExpr for compatibility
 type LiteralExpr struct {
 	Value string
 }
@@ -31,11 +63,11 @@ func (e *VariableExpr) String() string {
 	return "${" + e.Name + "[" + *e.Index + "]}"
 }
 
-type HeaderLookupExpr struct {
+type BlockLookupExpr struct {
 	Path string
 }
 
-func (e *HeaderLookupExpr) String() string {
+func (e *BlockLookupExpr) String() string {
 	return "${" + e.Path + "}"
 }
 
@@ -46,15 +78,6 @@ type CommandSubExpr struct {
 func (e *CommandSubExpr) String() string {
 	return "`" + e.Command + "`"
 }
-
-type ErrorPolicy int
-
-const (
-	FailFast ErrorPolicy = iota
-	IgnoreError
-	FallbackOnError
-	TryFallbackHalt
-)
 
 type Cmd struct {
 	Verb        string
@@ -77,19 +100,6 @@ type Redirect struct {
 	Target string
 }
 
-type BlockType int
-
-const (
-	MainBlock BlockType = iota
-	FnBlock
-	DataBlock
-	CustomBlock
-)
-
-type BlockModifier struct {
-	Flag string // -c, -i, -h
-}
-
 type Block struct {
 	Type      BlockType
 	Label     string
@@ -98,12 +108,6 @@ type Block struct {
 	Body      []interface{} // mix of Cmd and nested Block
 	Line      int
 	Column    int
-}
-
-type Import struct {
-	Path      string   // Original import path (e.g., "utils/helper.box")
-	Namespace string   // Derived namespace (e.g., "helper")
-	Program   *Program // The imported program
 }
 
 type Program struct {
@@ -116,33 +120,107 @@ type Program struct {
 	Namespaces map[string]map[string]*Block // Namespaced functions/data
 }
 
-type Parser struct {
-	lexer   *Lexer
-	current Token
+// Lexer definition for Box language
+var boxLexer = lexer.MustStateful(lexer.Rules{
+	"Root": {
+		{`Comment`, `#[^\n]*`, nil},
+		{`Newline`, `\n`, nil},
+		{`Whitespace`, `[ \t\r]+`, nil},
+		{`BlockStart`, `\[[^\]]+\]`, nil},
+		{`BlockEnd`, `\bend\b`, nil},
+		{`CommandSub`, "`[^`]*`", nil},
+		{`CommandSubDollar`, `\$\([^)]*\)`, nil},
+		{`BlockLookup`, `\$[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_][a-zA-Z0-9_.]*`, nil},
+		{`Variable`, `\$\{[^}]+\}|\$[a-zA-Z_][a-zA-Z0-9_]*(?:\[[^\]]*\])?|\$[0-9]+`, nil},
+		{`DoubleQuote`, `"(?:[^"\\]|\\.)*"`, nil},
+		{`SingleQuote`, `'[^']*'`, nil},
+		{`Pipeline`, `\|`, nil},
+		{`IgnoreError`, `\?`, nil},
+		{`Word`, `[^\s|>?#'"$\[\]`+"`"+`]+`, nil},
+	},
+})
+
+// Simple AST for Participle parsing
+type SimpleProgram struct {
+	Elements []Element `Newline* ( @@ ( Newline+ @@ )* )? Newline*`
 }
 
-func NewParser(lexer *Lexer) *Parser {
-	p := &Parser{lexer: lexer}
-	p.advance()
-	return p
+type Element struct {
+	Cmd    *SimpleCmd   `@@`
+	Block  *SimpleBlock `| @@`
+	Import *ImportStmt  `| @@`
 }
 
-func (p *Parser) advance() {
-	p.current = p.lexer.NextToken()
+type ImportStmt struct {
+	_    string `"import"`
+	Path string `@Word`
 }
 
-func (p *Parser) expect(kind TokenKind) error {
-	if p.current.Kind != kind {
-		return &BoxError{
-			Message:  fmt.Sprintf("expected %v, got %v", kind, p.current.Kind),
-			Location: Location{p.lexer.filename, p.current.Line, p.current.Column},
+type SimpleBlock struct {
+	Header string `@BlockStart`
+	// Don't parse body with Participle - handle manually
+}
+
+type SimpleElement struct {
+	Cmd *SimpleCmd `@@`
+}
+
+type SimpleCmd struct {
+	Verb     string       `@Word`
+	Args     []SimpleExpr `@@*`
+	Pipeline *SimpleCmd   `( "|" @@ )?`
+}
+
+
+type SimpleExpr struct {
+	Value string `@DoubleQuote | @SingleQuote | @CommandSub | @CommandSubDollar | @Variable | @BlockLookup | @Word`
+	Type  string // We'll determine the type from the token during conversion
+}
+
+// Parser implementation
+type ParticleParser struct {
+	filename string
+}
+
+// NewParticleParser creates a new parser using Participle
+func NewParticleParser(filename string) (*ParticleParser, error) {
+	return &ParticleParser{
+		filename: filename,
+	}, nil
+}
+
+// ParseFile parses a Box file
+func (p *ParticleParser) ParseFile(filename string) (*Program, error) {
+	content, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	return p.ParseString(string(content))
+}
+
+// ParseString parses Box source code from a string
+func (p *ParticleParser) ParseString(source string) (*Program, error) {
+	// Use manual parsing for better block handling
+	return p.parseManually(source)
+}
+
+// parseManually handles the parsing manually using the lexer tokens
+func (p *ParticleParser) parseManually(source string) (*Program, error) {
+	// Create lexer
+	lex, err := boxLexer.LexString(p.filename, source)
+	if err != nil {
+		return nil, &BoxError{
+			Message:  fmt.Sprintf("lexer error: %v", err),
+			Location: Location{p.filename, 0, 0},
 		}
 	}
-	p.advance()
-	return nil
+
+	// Parse tokens into program structure  
+	return p.parseTokens(lex)
 }
 
-func (p *Parser) Parse() (*Program, error) {
+// parseTokens manually parses lexer tokens into a Program
+func (p *ParticleParser) parseTokens(lex lexer.Lexer) (*Program, error) {
 	program := &Program{
 		Functions:  make(map[string]*Block),
 		Data:       make(map[string]*Block),
@@ -150,82 +228,64 @@ func (p *Parser) Parse() (*Program, error) {
 		Namespaces: make(map[string]map[string]*Block),
 	}
 
-	var topLevelCommands []interface{}
-
-	for p.current.Kind != EOF {
-		if p.current.Kind == COMMENT {
-			p.advance()
+	// Collect all tokens first
+	var tokens []lexer.Token
+	for {
+		token, err := lex.Next()
+		if err != nil {
+			return nil, err
+		}
+		if token.EOF() {
+			break
+		}
+		// Skip comments and whitespace
+		if token.Type == boxLexer.Symbols()["Comment"] || token.Type == boxLexer.Symbols()["Whitespace"] {
 			continue
 		}
+		tokens = append(tokens, token)
+	}
 
-		if p.current.Kind == HEADER_START {
-			block, err := p.parseBlock()
+	// Parse the token stream
+	var topLevelCommands []interface{}
+	i := 0
+	
+	for i < len(tokens) {
+		token := tokens[i]
+		
+		// Skip newlines at top level
+		if token.Type == boxLexer.Symbols()["Newline"] {
+			i++
+			continue
+		}
+		
+		// Handle blocks
+		if token.Type == boxLexer.Symbols()["BlockStart"] {
+			block, newIndex, err := p.parseBlock(tokens, i)
 			if err != nil {
 				return nil, err
 			}
+			
 			program.Blocks = append(program.Blocks, *block)
-
+			
 			// Organize blocks by type
 			switch block.Type {
-			case FnBlock:
-				if block.Label == "" {
-					return nil, &BoxError{
-						Message:  "function block missing name",
-						Location: Location{p.lexer.filename, block.Line, block.Column},
-					}
-				}
-				if _, exists := program.Functions[block.Label]; exists {
-					return nil, &BoxError{
-						Message:  fmt.Sprintf("function '%s' already defined", block.Label),
-						Location: Location{p.lexer.filename, block.Line, block.Column},
-					}
-				}
+			case FuncBlock:
 				program.Functions[block.Label] = block
 			case DataBlock:
-				if block.Label == "" {
-					return nil, &BoxError{
-						Message:  "data block missing name",
-						Location: Location{p.lexer.filename, block.Line, block.Column},
-					}
-				}
-				if _, exists := program.Data[block.Label]; exists {
-					return nil, &BoxError{
-						Message:  fmt.Sprintf("data block '%s' already defined", block.Label),
-						Location: Location{p.lexer.filename, block.Line, block.Column},
-					}
-				}
 				program.Data[block.Label] = block
 			case MainBlock:
-				if program.Main != nil {
-					return nil, &BoxError{
-						Message:  "multiple [main] blocks not allowed",
-						Location: Location{p.lexer.filename, block.Line, block.Column},
-					}
-				}
 				program.Main = block
 			}
+			
+			i = newIndex
 		} else {
-			// Top-level commands (outside any block)
-			if p.current.Kind == WORD && p.current.Value == "import" {
-				// Handle import statement
-				err := p.parseImport(program)
-				if err != nil {
-					return nil, err
-				}
-			} else if p.current.Kind == WORD &&
-				(p.current.Value == "if" || p.current.Value == "for" || p.current.Value == "while") {
-				controlBlock, err := p.parseControlStructure()
-				if err != nil {
-					return nil, err
-				}
-				topLevelCommands = append(topLevelCommands, *controlBlock)
-			} else {
-				cmdOrPipeline, err := p.parseCommandOrPipeline()
-				if err != nil {
-					return nil, err
-				}
-				topLevelCommands = append(topLevelCommands, cmdOrPipeline)
+			// Handle top-level commands
+			cmd, newIndex, err := p.parseCommand(tokens, i)
+			if err != nil {
+				return nil, err
 			}
+			topLevelCommands = append(topLevelCommands, cmd)
+			i = newIndex
 		}
 	}
 
@@ -241,58 +301,463 @@ func (p *Parser) Parse() (*Program, error) {
 	return program, nil
 }
 
-func (p *Parser) parseBlock() (*Block, error) {
-	if p.current.Kind != HEADER_START {
-		return nil, &BoxError{
-			Message:  "expected block header",
-			Location: Location{p.lexer.filename, p.current.Line, p.current.Column},
-		}
-	}
-
-	headerContent := p.current.Value[1 : len(p.current.Value)-1] // strip [ ]
-	line, column := p.current.Line, p.current.Column
-	p.advance()
-
+// parseBlock parses a block starting from a BlockStart token
+func (p *ParticleParser) parseBlock(tokens []lexer.Token, startIndex int) (*Block, int, error) {
+	blockToken := tokens[startIndex]
+	
 	block := &Block{
-		Line:   line,
-		Column: column,
-		Body:   []interface{}{},
+		Body: []interface{}{},
+		Line: blockToken.Pos.Line,
+		Column: blockToken.Pos.Column,
 	}
+	
+	// Parse block header
+	blockContent := strings.TrimSpace(blockToken.Value)
+	if len(blockContent) >= 2 && blockContent[0] == '[' && blockContent[len(blockContent)-1] == ']' {
+		blockContent = blockContent[1 : len(blockContent)-1]
+	}
+	
+	err := p.parseBlockHeader(block, blockContent)
+	if err != nil {
+		return nil, startIndex, err
+	}
+	
+	// Find the matching end token
+	i := startIndex + 1
+	bodyStart := i
+	
+	// Skip newlines after header
+	for i < len(tokens) && tokens[i].Type == boxLexer.Symbols()["Newline"] {
+		i++
+	}
+	bodyStart = i
+	
+	// Find matching end - need to track both block depth and control structure depth
+	fmt.Printf("DEBUG: parseBlock looking for matching end, starting depth=1 at bodyStart=%d\n", bodyStart)
+	blockDepth := 1  // Tracks nested blocks ([main], [fn], etc.)
+	controlDepth := 0  // Tracks nested control structures (if, while, for)
+	
+	for i < len(tokens) && blockDepth > 0 {
+		token := tokens[i]
+		fmt.Printf("DEBUG: parseBlock at %d: %s = %s, blockDepth=%d, controlDepth=%d\n", 
+			i, tokenTypeName(token.Type), token.Value, blockDepth, controlDepth)
+		
+		if token.Type == boxLexer.Symbols()["BlockStart"] {
+			blockDepth++
+			fmt.Printf("DEBUG: parseBlock found nested BlockStart, blockDepth now %d\n", blockDepth)
+		} else if token.Type == boxLexer.Symbols()["Word"] && 
+		          (token.Value == "while" || token.Value == "if" || token.Value == "for") {
+			controlDepth++
+			fmt.Printf("DEBUG: parseBlock found control structure start, controlDepth now %d\n", controlDepth)
+		} else if token.Type == boxLexer.Symbols()["BlockEnd"] {
+			if controlDepth > 0 {
+				// This 'end' closes a control structure, not a block
+				controlDepth--
+				fmt.Printf("DEBUG: parseBlock found control structure end, controlDepth now %d\n", controlDepth)
+			} else {
+				// This 'end' closes a block
+				blockDepth--
+				fmt.Printf("DEBUG: parseBlock found block end, blockDepth now %d\n", blockDepth)
+			}
+		}
+		
+		if blockDepth > 0 {
+			i++
+		}
+	}
+	fmt.Printf("DEBUG: parseBlock found matching end at index %d, body range: %d to %d\n", i, bodyStart, i)
+	
+	if blockDepth > 0 {
+		return nil, startIndex, &BoxError{
+			Message: "unclosed block",
+			Location: Location{p.filename, blockToken.Pos.Line, blockToken.Pos.Column},
+		}
+	}
+	
+	// Parse body tokens
+	if i > bodyStart {
+		bodyTokens := tokens[bodyStart:i]
+		block.Body = p.parseBodyTokens(bodyTokens)
+	}
+	
+	return block, i + 1, nil // i points to 'end', return i+1 to skip it
+}
 
-	parts := strings.Fields(headerContent)
+// parseCommand parses a single command starting from the given index
+func (p *ParticleParser) parseCommand(tokens []lexer.Token, startIndex int) (interface{}, int, error) {
+	if startIndex >= len(tokens) {
+		return nil, startIndex, &BoxError{
+			Message: "unexpected end of input",
+			Location: Location{p.filename, 0, 0},
+		}
+	}
+	
+	// Collect tokens until newline or end of tokens
+	var cmdTokens []lexer.Token
+	i := startIndex
+	
+	for i < len(tokens) && tokens[i].Type != boxLexer.Symbols()["Newline"] {
+		cmdTokens = append(cmdTokens, tokens[i])
+		i++
+	}
+	
+	if len(cmdTokens) == 0 {
+		return nil, i, &BoxError{
+			Message: "empty command",
+			Location: Location{p.filename, 0, 0},
+		}
+	}
+	
+	// Parse the command tokens
+	cmd := p.parseCommandTokens(cmdTokens)
+	
+	// Skip the newline
+	if i < len(tokens) && tokens[i].Type == boxLexer.Symbols()["Newline"] {
+		i++
+	}
+	
+	return cmd, i, nil
+}
+
+// parseBodyTokens parses tokens within a block body
+func (p *ParticleParser) parseBodyTokens(tokens []lexer.Token) []interface{} {
+	var result []interface{}
+	i := 0
+	
+	// DEBUG: Print token overview
+	fmt.Printf("DEBUG: parseBodyTokens called with %d tokens\n", len(tokens))
+	for idx, token := range tokens {
+		if token.Type != boxLexer.Symbols()["Whitespace"] && token.Type != boxLexer.Symbols()["Newline"] {
+			fmt.Printf("  [%d] %s: %s\n", idx, tokenTypeName(token.Type), token.Value)
+		}
+	}
+	
+	for i < len(tokens) {
+		if i >= len(tokens) {
+			break
+		}
+		
+		fmt.Printf("DEBUG: parseBodyTokens at index %d/%d, token: %s = %s\n", 
+			i, len(tokens), tokenTypeName(tokens[i].Type), tokens[i].Value)
+		
+		// Skip newlines
+		if tokens[i].Type == boxLexer.Symbols()["Newline"] {
+			fmt.Printf("DEBUG: Skipping newline at %d\n", i)
+			i++
+			continue
+		}
+		
+		// Check for control structures
+		if tokens[i].Type == boxLexer.Symbols()["Word"] && 
+		   (tokens[i].Value == "while" || tokens[i].Value == "if" || tokens[i].Value == "for") {
+			fmt.Printf("DEBUG: Found control structure %s at index %d\n", tokens[i].Value, i)
+			// Parse control structure
+			controlBlock, newIndex := p.parseControlStructureTokens(tokens, i)
+			fmt.Printf("DEBUG: Control structure parsed, returned index %d (was %d)\n", newIndex, i)
+			result = append(result, *controlBlock)
+			i = newIndex
+		} else {
+			fmt.Printf("DEBUG: Parsing regular command at index %d\n", i)
+			// Parse regular command
+			cmd, newIndex := p.parseCommandFromTokens(tokens, i)
+			fmt.Printf("DEBUG: Regular command parsed, returned index %d (was %d)\n", newIndex, i)
+			if cmd != nil {
+				result = append(result, cmd)
+			}
+			i = newIndex
+		}
+	}
+	
+	fmt.Printf("DEBUG: parseBodyTokens finished with %d results\n", len(result))
+	return result
+}
+
+// Helper function to get token type name for debugging
+func tokenTypeName(tokenType lexer.TokenType) string {
+	for name, t := range boxLexer.Symbols() {
+		if t == tokenType {
+			return name
+		}
+	}
+	return "UNKNOWN"
+}
+
+// parseCommandTokens creates a Cmd from a sequence of tokens
+func (p *ParticleParser) parseCommandTokens(tokens []lexer.Token) interface{} {
+	if len(tokens) == 0 {
+		return nil
+	}
+	
+	// Find pipeline separators
+	var commands [][]lexer.Token
+	var currentCmd []lexer.Token
+	
+	for _, token := range tokens {
+		if token.Type == boxLexer.Symbols()["Pipeline"] {
+			if len(currentCmd) > 0 {
+				commands = append(commands, currentCmd)
+				currentCmd = []lexer.Token{}
+			}
+		} else {
+			currentCmd = append(currentCmd, token)
+		}
+	}
+	if len(currentCmd) > 0 {
+		commands = append(commands, currentCmd)
+	}
+	
+	if len(commands) == 1 {
+		// Single command
+		cmd := p.createCmd(commands[0])
+		if cmd == nil {
+			return nil
+		}
+		return *cmd
+	} else {
+		// Pipeline
+		pipeline := &Pipeline{
+			Commands: []Cmd{},
+		}
+		for _, cmdTokens := range commands {
+			cmd := p.createCmd(cmdTokens)
+			if cmd != nil {
+				pipeline.Commands = append(pipeline.Commands, *cmd)
+			}
+		}
+		return *pipeline
+	}
+}
+
+// createCmd creates a Cmd from tokens
+func (p *ParticleParser) createCmd(tokens []lexer.Token) *Cmd {
+	if len(tokens) == 0 {
+		return nil
+	}
+	
+	cmd := &Cmd{
+		Verb:        tokens[0].Value,
+		Args:        []Expr{},
+		Redirects:   []Redirect{},
+		ErrorPolicy: FailFast,
+		Line:        tokens[0].Pos.Line,
+		Column:      tokens[0].Pos.Column,
+	}
+	
+	// Parse arguments
+	for _, token := range tokens[1:] {
+		expr := p.createExpr(token)
+		if expr != nil {
+			cmd.Args = append(cmd.Args, expr)
+		}
+	}
+	
+	return cmd
+}
+
+// createExpr creates an Expr from a token
+func (p *ParticleParser) createExpr(token lexer.Token) Expr {
+	value := token.Value
+	
+	// Determine the type based on the token type
+	switch token.Type {
+	case boxLexer.Symbols()["DoubleQuote"]:
+		// Remove quotes and process escape sequences
+		if len(value) >= 2 {
+			value = value[1 : len(value)-1]
+		}
+		value = p.processEscapeSequences(value)
+		return &LiteralExpr{Value: value}
+		
+	case boxLexer.Symbols()["SingleQuote"]:
+		// Remove quotes
+		if len(value) >= 2 {
+			value = value[1 : len(value)-1]
+		}
+		return &LiteralExpr{Value: value}
+		
+	case boxLexer.Symbols()["Variable"]:
+		return p.parseVariable(value)
+		
+	case boxLexer.Symbols()["BlockLookup"]:
+		path := value
+		if strings.HasPrefix(path, "$") {
+			path = path[1:]
+		}
+		return &BlockLookupExpr{Path: path}
+		
+	case boxLexer.Symbols()["CommandSub"], boxLexer.Symbols()["CommandSubDollar"]:
+		command := value
+		if strings.HasPrefix(command, "`") && strings.HasSuffix(command, "`") {
+			command = command[1 : len(command)-1]
+		} else if strings.HasPrefix(command, "$(") && strings.HasSuffix(command, ")") {
+			command = command[2 : len(command)-1]
+		}
+		return &CommandSubExpr{Command: command}
+		
+	default:
+		return &LiteralExpr{Value: value}
+	}
+}
+
+// parseVariable parses a variable token into a VariableExpr
+func (p *ParticleParser) parseVariable(value string) Expr {
+	name := value
+	if strings.HasPrefix(name, "$") {
+		name = name[1:]
+	}
+	// Remove {} wrapper if present
+	if strings.HasPrefix(name, "{") && strings.HasSuffix(name, "}") {
+		name = name[1 : len(name)-1]
+	}
+	
+	// Handle array access
+	var index *string
+	if strings.Contains(name, "[") {
+		parts := strings.Split(name, "[")
+		if len(parts) == 2 && strings.HasSuffix(parts[1], "]") {
+			baseName := parts[0]
+			indexStr := strings.TrimSuffix(parts[1], "]")
+			name = baseName
+			index = &indexStr
+		}
+	}
+	return &VariableExpr{Name: name, Index: index}
+}
+
+// parseCommandFromTokens parses a command from a token slice, finding the end
+func (p *ParticleParser) parseCommandFromTokens(tokens []lexer.Token, startIndex int) (interface{}, int) {
+	if startIndex >= len(tokens) {
+		return nil, startIndex
+	}
+	
+	// Collect tokens until newline
+	var cmdTokens []lexer.Token
+	i := startIndex
+	
+	for i < len(tokens) && tokens[i].Type != boxLexer.Symbols()["Newline"] {
+		cmdTokens = append(cmdTokens, tokens[i])
+		i++
+	}
+	
+	// Skip the newline
+	if i < len(tokens) && tokens[i].Type == boxLexer.Symbols()["Newline"] {
+		i++
+	}
+	
+	return p.parseCommandTokens(cmdTokens), i
+}
+
+// parseControlStructureTokens parses control structures manually
+func (p *ParticleParser) parseControlStructureTokens(tokens []lexer.Token, startIndex int) (*Block, int) {
+	startToken := tokens[startIndex]
+	
+	fmt.Printf("DEBUG: parseControlStructureTokens starting at index %d, token: %s\n", startIndex, startToken.Value)
+	
+	block := &Block{
+		Type:  CustomBlock,
+		Label: startToken.Value,
+		Args:  []string{},
+		Body:  []interface{}{},
+		Line:  startToken.Pos.Line,
+		Column: startToken.Pos.Column,
+	}
+	
+	// Parse arguments until newline
+	i := startIndex + 1
+	for i < len(tokens) && tokens[i].Type != boxLexer.Symbols()["Newline"] {
+		if tokens[i].Type != boxLexer.Symbols()["Whitespace"] {
+			expr := p.createExpr(tokens[i])
+			if expr != nil {
+				block.Args = append(block.Args, expr.String())
+				fmt.Printf("DEBUG: Added arg: %s\n", expr.String())
+			}
+		}
+		i++
+	}
+	
+	// Skip newline after control structure header
+	if i < len(tokens) && tokens[i].Type == boxLexer.Symbols()["Newline"] {
+		fmt.Printf("DEBUG: Skipping newline after control structure header at %d\n", i)
+		i++
+	}
+	
+	// Find matching end
+	depth := 1
+	bodyStart := i
+	fmt.Printf("DEBUG: Looking for matching end, bodyStart=%d, depth=%d\n", bodyStart, depth)
+	
+	for i < len(tokens) && depth > 0 {
+		token := tokens[i]
+		fmt.Printf("DEBUG: Depth tracking at %d: %s = %s, depth=%d\n", i, tokenTypeName(token.Type), token.Value, depth)
+		
+		if token.Type == boxLexer.Symbols()["Word"] && 
+		   (token.Value == "while" || token.Value == "if" || token.Value == "for") {
+			depth++
+			fmt.Printf("DEBUG: Found nested control structure, depth now %d\n", depth)
+		} else if token.Type == boxLexer.Symbols()["BlockEnd"] {
+			depth--
+			fmt.Printf("DEBUG: Found BlockEnd, depth now %d\n", depth)
+		}
+		
+		if depth > 0 {
+			i++
+		}
+	}
+	
+	fmt.Printf("DEBUG: Found matching end at index %d, bodyStart=%d to bodyEnd=%d\n", i, bodyStart, i)
+	
+	// Parse body
+	if i > bodyStart {
+		bodyTokens := tokens[bodyStart:i]
+		fmt.Printf("DEBUG: Parsing control structure body with %d tokens\n", len(bodyTokens))
+		block.Body = p.parseBodyTokens(bodyTokens)
+	}
+	
+	// Skip the 'end' token
+	if i < len(tokens) && tokens[i].Type == boxLexer.Symbols()["BlockEnd"] {
+		fmt.Printf("DEBUG: Skipping BlockEnd token at %d\n", i)
+		i++
+	}
+	
+	fmt.Printf("DEBUG: parseControlStructureTokens returning index %d\n", i)
+	return block, i
+}
+
+// parseBlockHeader parses the block header content
+func (p *ParticleParser) parseBlockHeader(block *Block, blockContent string) error {
+	parts := strings.Fields(blockContent)
 	if len(parts) == 0 {
-		return nil, &BoxError{
+		return &BoxError{
 			Message:  "empty block header",
-			Location: Location{p.lexer.filename, line, column},
+			Location: Location{p.filename, 0, 0},
 		}
 	}
 
-	// Parse block type first
 	blockTypeStr := parts[0]
-
-	// Parse modifiers (they come after block type in Box syntax)
 	i := 1
+
+	// Parse modifiers
 	for i < len(parts) && strings.HasPrefix(parts[i], "-") {
 		block.Modifiers = append(block.Modifiers, BlockModifier{Flag: parts[i]})
 		i++
 	}
 
-	// Now i points to the first non-modifier part after the block type
+	// Set block type and parse arguments
 	switch blockTypeStr {
 	case "main":
 		block.Type = MainBlock
 		if i < len(parts) {
-			return nil, &BoxError{
+			return &BoxError{
 				Message:  "[main] block cannot have arguments",
-				Location: Location{p.lexer.filename, line, column},
+				Location: Location{p.filename, 0, 0},
 			}
 		}
 	case "fn":
-		block.Type = FnBlock
+		block.Type = FuncBlock
 		if i >= len(parts) {
-			return nil, &BoxError{
+			return &BoxError{
 				Message:  "[fn] block missing function name",
-				Location: Location{p.lexer.filename, line, column},
+				Location: Location{p.filename, 0, 0},
 			}
 		}
 		block.Label = parts[i]
@@ -300,502 +765,111 @@ func (p *Parser) parseBlock() (*Block, error) {
 	case "data":
 		block.Type = DataBlock
 		if i >= len(parts) {
-			return nil, &BoxError{
+			return &BoxError{
 				Message:  "[data] block missing data name",
-				Location: Location{p.lexer.filename, line, column},
+				Location: Location{p.filename, 0, 0},
 			}
 		}
 		block.Label = parts[i]
-		// Note: data blocks don't have additional arguments like functions do
 	default:
-		// Allow custom blocks but validate they're reasonable
-		if strings.HasPrefix(blockTypeStr, "-") {
-			return nil, &BoxError{
-				Message:  fmt.Sprintf("unknown block type '%s' - did you mean 'fn', 'data', or 'main'?", blockTypeStr),
-				Location: Location{p.lexer.filename, line, column},
-			}
-		}
 		block.Type = CustomBlock
 		block.Label = blockTypeStr
 		block.Args = parts[1:]
 	}
 
-	// Parse block body
-	for p.current.Kind != BLOCK_END && p.current.Kind != EOF {
-		if p.current.Kind == COMMENT {
-			p.advance()
-			continue
-		}
-
-		if p.current.Kind == HEADER_START {
-			nestedBlock, err := p.parseBlock()
-			if err != nil {
-				return nil, err
-			}
-			block.Body = append(block.Body, *nestedBlock)
-		} else {
-			// Check for control structures
-			if p.current.Kind == WORD &&
-				(p.current.Value == "if" || p.current.Value == "for" || p.current.Value == "while") {
-				controlBlock, err := p.parseControlStructure()
-				if err != nil {
-					return nil, err
-				}
-				block.Body = append(block.Body, *controlBlock)
-			} else {
-				cmdOrPipeline, err := p.parseCommandOrPipeline()
-				if err != nil {
-					return nil, err
-				}
-				block.Body = append(block.Body, cmdOrPipeline)
-			}
-		}
-	}
-
-	if p.current.Kind == BLOCK_END {
-		p.advance()
-	}
-
-	return block, nil
-}
-
-func (p *Parser) parseControlStructure() (*Block, error) {
-	if p.current.Kind != WORD {
-		return nil, &BoxError{
-			Message:  "expected control structure keyword",
-			Location: Location{p.lexer.filename, p.current.Line, p.current.Column},
-		}
-	}
-
-	keyword := p.current.Value
-	line, column := p.current.Line, p.current.Column
-
-	block := &Block{
-		Type:   CustomBlock,
-		Label:  keyword,
-		Line:   line,
-		Column: column,
-		Body:   []interface{}{},
-	}
-
-	p.advance() // consume control keyword
-
-	// Parse the condition/iteration part on the same line
-	for p.current.Kind != EOF && p.current.Kind != COMMENT &&
-		p.current.Line == line {
-
-		if p.current.Kind == WORD || p.current.Kind == VARIABLE || p.current.Kind == DOUBLE_QUOTE ||
-			p.current.Kind == SINGLE_QUOTE || p.current.Kind == COMMAND_SUB || p.current.Kind == HEADER_LOOKUP {
-			expr, err := p.parseExpression()
-			if err != nil {
-				return nil, err
-			}
-			block.Args = append(block.Args, expr.String())
-		} else {
-			break
-		}
-	}
-
-	// Parse the body until we hit 'end' or 'else'
-	for p.current.Kind != BLOCK_END && p.current.Kind != EOF {
-		if p.current.Kind == COMMENT {
-			p.advance()
-			continue
-		}
-
-		if p.current.Kind == WORD && p.current.Value == "else" {
-			// Handle else clause
-			p.advance()
-			elseBlock := &Block{
-				Type:   CustomBlock,
-				Label:  "else",
-				Line:   p.current.Line,
-				Column: p.current.Column,
-				Body:   []interface{}{},
-			}
-
-			// Parse else body
-			for p.current.Kind != BLOCK_END && p.current.Kind != EOF {
-				if p.current.Kind == COMMENT {
-					p.advance()
-					continue
-				}
-
-				if p.current.Kind == HEADER_START {
-					nestedBlock, err := p.parseBlock()
-					if err != nil {
-						return nil, err
-					}
-					elseBlock.Body = append(elseBlock.Body, *nestedBlock)
-				} else if p.current.Kind == WORD &&
-					(p.current.Value == "if" || p.current.Value == "for" || p.current.Value == "while") {
-					controlBlock, err := p.parseControlStructure()
-					if err != nil {
-						return nil, err
-					}
-					elseBlock.Body = append(elseBlock.Body, *controlBlock)
-				} else {
-					cmd, err := p.parseCommand()
-					if err != nil {
-						return nil, err
-					}
-					elseBlock.Body = append(elseBlock.Body, *cmd)
-				}
-			}
-
-			block.Body = append(block.Body, *elseBlock)
-			break
-		}
-
-		if p.current.Kind == HEADER_START {
-			nestedBlock, err := p.parseBlock()
-			if err != nil {
-				return nil, err
-			}
-			block.Body = append(block.Body, *nestedBlock)
-		} else if p.current.Kind == WORD &&
-			(p.current.Value == "if" || p.current.Value == "for" || p.current.Value == "while") {
-			controlBlock, err := p.parseControlStructure()
-			if err != nil {
-				return nil, err
-			}
-			block.Body = append(block.Body, *controlBlock)
-		} else {
-			cmd, err := p.parseCommand()
-			if err != nil {
-				return nil, err
-			}
-			block.Body = append(block.Body, *cmd)
-		}
-	}
-
-	if p.current.Kind == BLOCK_END {
-		p.advance()
-	}
-
-	return block, nil
-}
-
-func (p *Parser) parseCommand() (*Cmd, error) {
-	if p.current.Kind != WORD {
-		return nil, &BoxError{
-			Message:  "expected command verb",
-			Location: Location{p.lexer.filename, p.current.Line, p.current.Column},
-		}
-	}
-
-	cmd := &Cmd{
-		Verb:        p.current.Value,
-		Line:        p.current.Line,
-		Column:      p.current.Column,
-		ErrorPolicy: FailFast,
-	}
-	startLine := p.current.Line
-	p.advance()
-
-	// Parse arguments until we hit something that ends the command
-	for p.current.Kind != EOF && p.current.Kind != PIPELINE &&
-		p.current.Kind != REDIRECT && p.current.Kind != IGNORE_ERROR &&
-		p.current.Kind != HEADER_START && p.current.Kind != BLOCK_END {
-
-		if p.current.Kind == COMMENT {
-			break
-		}
-
-		// Stop if we hit '!' (which is used for try-fallback-halt)
-		if p.current.Kind == WORD && p.current.Value == "!" {
-			break
-		}
-
-		// Stop if we hit a new line and encounter what looks like a new command
-		if p.current.Line > startLine && p.current.Kind == WORD {
-			// Check if this word could be a command verb
-			if p.isLikelyCommand(p.current.Value) {
-				break
-			}
-		}
-
-		expr, err := p.parseExpression()
-		if err != nil {
-			return nil, err
-		}
-		cmd.Args = append(cmd.Args, expr)
-	}
-
-	// Parse redirections
-	for p.current.Kind == REDIRECT {
-		redirect := Redirect{Type: p.current.Value}
-		p.advance()
-
-		if p.current.Kind == WORD {
-			redirect.Target = p.current.Value
-			p.advance()
-		}
-		cmd.Redirects = append(cmd.Redirects, redirect)
-	}
-
-	// Parse error policy and fallback
-	if p.current.Kind == IGNORE_ERROR {
-		p.advance()
-		cmd.ErrorPolicy = IgnoreError
-
-		// Check for fallback command after ?
-		if p.current.Kind == WORD {
-			fallback, err := p.parseCommand()
-			if err != nil {
-				return nil, err
-			}
-			cmd.Fallback = fallback
-			cmd.ErrorPolicy = FallbackOnError
-		}
-	} else if p.current.Kind == WORD && p.current.Value == "!" {
-		// Handle ! fallback (try-fallback-halt)
-		p.advance()
-		if p.current.Kind == WORD {
-			fallback, err := p.parseCommand()
-			if err != nil {
-				return nil, err
-			}
-			cmd.Fallback = fallback
-			cmd.ErrorPolicy = TryFallbackHalt
-		} else {
-			return nil, &BoxError{
-				Message:  "! requires fallback command",
-				Location: Location{p.lexer.filename, p.current.Line, p.current.Column},
-			}
-		}
-	}
-
-	return cmd, nil
-}
-
-// parseCommandOrPipeline parses either a single command or a pipeline of commands
-func (p *Parser) parseCommandOrPipeline() (interface{}, error) {
-	firstCmd, err := p.parseCommand()
-	if err != nil {
-		return nil, err
-	}
-
-	// Check if this is part of a pipeline
-	if p.current.Kind == PIPELINE {
-		pipeline := &Pipeline{
-			Commands: []Cmd{*firstCmd},
-			Line:     firstCmd.Line,
-			Column:   firstCmd.Column,
-		}
-
-		// Parse remaining commands in the pipeline
-		for p.current.Kind == PIPELINE {
-			p.advance() // consume |
-
-			nextCmd, err := p.parseCommand()
-			if err != nil {
-				return nil, err
-			}
-			pipeline.Commands = append(pipeline.Commands, *nextCmd)
-		}
-
-		return *pipeline, nil
-	}
-
-	// Not a pipeline, just return the single command
-	return *firstCmd, nil
-}
-
-// Helper function to determine if a word is likely a command verb
-func (p *Parser) isLikelyCommand(word string) bool {
-	// Common Box commands and built-ins
-	commands := []string{
-		"echo", "set", "run", "cd", "exit", "return", "if", "for", "while",
-		"break", "continue", "exists", "test", "copy", "move", "delete",
-		"mkdir", "touch", "sleep", "spawn", "wait", "hash", "len", "link",
-		"glob", "match", "prompt", "arith", "env",
-	}
-
-	for _, cmd := range commands {
-		if word == cmd {
-			return true
-		}
-	}
-
-	// Also check if it looks like a function call (user-defined commands)
-	// For now, assume any word that isn't obviously an argument could be a command
-	return true
-}
-
-func (p *Parser) parseExpression() (Expr, error) {
-	switch p.current.Kind {
-	case WORD:
-		expr := &LiteralExpr{Value: p.current.Value}
-		p.advance()
-		return expr, nil
-
-	case SINGLE_QUOTE:
-		expr := &LiteralExpr{Value: p.current.Value}
-		p.advance()
-		return expr, nil
-
-	case DOUBLE_QUOTE:
-		// Handle variable expansion in double quotes
-		value := p.current.Value
-		p.advance()
-
-		// For now, create a literal but mark it for expansion
-		// TODO: Implement proper interpolation parsing
-		expr := &LiteralExpr{Value: value}
-		return expr, nil
-
-	case VARIABLE:
-		name := p.current.Value
-		p.advance()
-
-		// Parse variable with potential array access
-		var index *string
-		if strings.Contains(name, "[") {
-			// Extract base name and index
-			parts := strings.Split(name, "[")
-			if len(parts) == 2 && strings.HasSuffix(parts[1], "]") {
-				baseName := parts[0]
-				indexStr := strings.TrimSuffix(parts[1], "]")
-				name = baseName
-				index = &indexStr
-			}
-		}
-
-		return &VariableExpr{Name: name, Index: index}, nil
-
-	case HEADER_LOOKUP:
-		path := p.current.Value
-		p.advance()
-		return &HeaderLookupExpr{Path: path}, nil
-
-	case COMMAND_SUB:
-		command := p.current.Value
-		p.advance()
-		return &CommandSubExpr{Command: command}, nil
-
-	default:
-		return nil, &BoxError{
-			Message:  fmt.Sprintf("unexpected token in expression: %v", p.current.Kind),
-			Location: Location{p.lexer.filename, p.current.Line, p.current.Column},
-		}
-	}
-}
-
-// parseImport handles import statements like "import path/to/file.box"
-func (p *Parser) parseImport(program *Program) error {
-	if p.current.Kind != WORD || p.current.Value != "import" {
-		return &BoxError{
-			Message:  "expected 'import'",
-			Location: Location{p.lexer.filename, p.current.Line, p.current.Column},
-		}
-	}
-
-	importLine := p.current.Line
-	p.advance() // consume 'import'
-
-	if p.current.Kind != WORD {
-		return &BoxError{
-			Message:  "expected import path after 'import'",
-			Location: Location{p.lexer.filename, p.current.Line, p.current.Column},
-		}
-	}
-
-	importPath := p.current.Value
-	p.advance() // consume path
-
-	// Validate .box extension
-	if !strings.HasSuffix(importPath, ".box") {
-		return &BoxError{
-			Message:  "import path must end with .box",
-			Location: Location{p.lexer.filename, importLine, p.current.Column},
-		}
-	}
-
-	// Derive namespace from filename
-	filename := path.Base(importPath)
-	namespace := strings.TrimSuffix(filename, ".box")
-
-	// Check for namespace collision
-	if _, exists := program.ImportMap[namespace]; exists {
-		return &BoxError{
-			Message:  fmt.Sprintf("namespace '%s' already imported", namespace),
-			Location: Location{p.lexer.filename, importLine, p.current.Column},
-		}
-	}
-
-	// Check for collision with local functions/data
-	if _, exists := program.Functions[namespace]; exists {
-		return &BoxError{
-			Message:  fmt.Sprintf("namespace '%s' conflicts with local function", namespace),
-			Location: Location{p.lexer.filename, importLine, p.current.Column},
-		}
-	}
-	if _, exists := program.Data[namespace]; exists {
-		return &BoxError{
-			Message:  fmt.Sprintf("namespace '%s' conflicts with local data block", namespace),
-			Location: Location{p.lexer.filename, importLine, p.current.Column},
-		}
-	}
-
-	// Load and parse the imported file
-	importedProgram, err := p.loadImportedFile(importPath)
-	if err != nil {
-		return &BoxError{
-			Message:  fmt.Sprintf("failed to import '%s': %v", importPath, err),
-			Location: Location{p.lexer.filename, importLine, p.current.Column},
-		}
-	}
-
-	// Create import record
-	importRecord := Import{
-		Path:      importPath,
-		Namespace: namespace,
-		Program:   importedProgram,
-	}
-
-	// Add to program
-	program.Imports = append(program.Imports, importRecord)
-	program.ImportMap[namespace] = &importRecord
-
-	// Create namespace maps for functions and data
-	program.Namespaces[namespace] = make(map[string]*Block)
-
-	// Add imported functions and data to namespace (ignore main block)
-	for name, fn := range importedProgram.Functions {
-		program.Namespaces[namespace][name] = fn
-	}
-	for name, data := range importedProgram.Data {
-		program.Namespaces[namespace][name] = data
-	}
-
 	return nil
 }
 
-// loadImportedFile loads and parses a .box file for importing
-func (p *Parser) loadImportedFile(importPath string) (*Program, error) {
-	// Resolve relative paths relative to current file's directory
-	var resolvedPath string
-	if filepath.IsAbs(importPath) {
-		resolvedPath = importPath
-	} else {
-		// Get directory of current file being parsed
-		currentDir := filepath.Dir(p.lexer.filename)
-		resolvedPath = filepath.Join(currentDir, importPath)
+// processEscapeSequences processes escape sequences in double-quoted strings
+func (p *ParticleParser) processEscapeSequences(value string) string {
+	result := ""
+	i := 0
+	for i < len(value) {
+		if value[i] == '\\' && i+1 < len(value) {
+			switch value[i+1] {
+			case 'n':
+				result += "\n"
+			case 't':
+				result += "\t"
+			case 'r':
+				result += "\r"
+			case '\\':
+				result += "\\"
+			case '"':
+				result += "\""
+			default:
+				// Unknown escape sequence, keep as-is
+				result += string(value[i]) + string(value[i+1])
+			}
+			i += 2
+		} else {
+			result += string(value[i])
+			i++
+		}
 	}
-
-	// Load the file
-	lexer, err := NewLexerFromFile(resolvedPath)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse the imported file
-	parser := NewParser(lexer)
-	program, err := parser.Parse()
-	if err != nil {
-		return nil, err
-	}
-
-	return program, nil
+	return result
 }
+
+// DebugToken represents a token for debugging
+type DebugToken struct {
+	Type   string
+	Value  string
+	Line   int
+	Column int
+	EOF    bool
+}
+
+// DebugLexer wraps the Participle lexer for debugging
+type DebugLexer struct {
+	lexer   lexer.Lexer
+	symbols map[string]lexer.TokenType
+}
+
+// NewLexerForDebug creates a lexer for debugging token output
+func NewLexerForDebug(content, filename string) (*DebugLexer, error) {
+	lex, err := boxLexer.LexString(filename, content)
+	if err != nil {
+		return nil, err
+	}
+	
+	return &DebugLexer{
+		lexer:   lex,
+		symbols: boxLexer.Symbols(),
+	}, nil
+}
+
+// NextToken returns the next token for debugging
+func (d *DebugLexer) NextToken() (*DebugToken, error) {
+	token, err := d.lexer.Next()
+	if err != nil {
+		return nil, err
+	}
+	
+	if token.EOF() {
+		return &DebugToken{
+			Type:   "EOF",
+			Value:  "",
+			Line:   token.Pos.Line,
+			Column: token.Pos.Column,
+			EOF:    true,
+		}, nil
+	}
+	
+	// Find token type name
+	typeName := "UNKNOWN"
+	for name, t := range d.symbols {
+		if t == token.Type {
+			typeName = name
+			break
+		}
+	}
+	
+	return &DebugToken{
+		Type:   typeName,
+		Value:  token.Value,
+		Line:   token.Pos.Line,
+		Column: token.Pos.Column,
+		EOF:    false,
+	}, nil
+}
+

@@ -1,0 +1,8 @@
+[main]
+  set buf "line1" "line2" "line3"
+  set file "/tmp/test_output.txt"
+  echo "Writing buffer to $file"
+  join "\n" ${buf[*]} | run tee $file
+  echo "File written, checking contents:"
+  run cat $file
+end

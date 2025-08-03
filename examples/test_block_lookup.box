@@ -1,0 +1,8 @@
+[data config]
+name = "TestApp"
+version = "1.0"
+end
+
+[main]
+echo "App: $config.name v$config.version"
+end

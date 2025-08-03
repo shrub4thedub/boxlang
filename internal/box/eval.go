@@ -135,7 +135,7 @@ func (e *Evaluator) Eval(program *Program, args []string) Result {
 
 	// First pass: collect functions and data blocks
 	for i, block := range program.Blocks {
-		if block.Type == FnBlock {
+		if block.Type == FuncBlock {
 			e.scope.Functions[block.Label] = &program.Blocks[i] // Use address from slice
 		} else if block.Type == DataBlock {
 			result := e.loadDataBlock(&block)
@@ -798,7 +798,7 @@ func (e *Evaluator) evalExpression(expr Expr) (Value, error) {
 		}
 		return Value{}, nil
 
-	case *HeaderLookupExpr:
+	case *BlockLookupExpr:
 		parts := strings.Split(v.Path, ".")
 		if len(parts) < 2 {
 			return Value{}, &BoxError{
@@ -842,10 +842,14 @@ func (e *Evaluator) evalExpression(expr Expr) (Value, error) {
 // executeCommandSubstitution parses and executes a command substitution
 func (e *Evaluator) executeCommandSubstitution(commandStr string) (Value, error) {
 	// Parse the command string as a mini Box program
-	lexer := NewLexer(commandStr, "command-substitution")
-	parser := NewParser(lexer)
+	parser, err := NewParticleParser("command-substitution")
+	if err != nil {
+		return Value{}, &BoxError{
+			Message: fmt.Sprintf("command substitution parser error: %v", err),
+		}
+	}
 
-	program, err := parser.Parse()
+	program, err := parser.ParseString(commandStr)
 	if err != nil {
 		return Value{}, &BoxError{
 			Message: fmt.Sprintf("command substitution parse error: %v", err),

@@ -44,10 +44,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	lexer := box.NewLexer(string(content), scriptPath)
-	parser := box.NewParser(lexer)
+	parser, err := box.NewParticleParser(scriptPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Parser initialization error: %v\n", err)
+		os.Exit(1)
+	}
 
-	program, err := parser.Parse()
+	program, err := parser.ParseString(string(content))
 	if err != nil {
 		if boxErr, ok := err.(*box.BoxError); ok {
 			fmt.Fprint(os.Stderr, box.FormatError(boxErr))
@@ -80,59 +83,43 @@ func lexDebug(filename string) {
 		os.Exit(1)
 	}
 
-	lexer := box.NewLexer(string(content), filename)
+	lexer, err := box.NewLexerForDebug(string(content), filename)
+	if err != nil {
+		fmt.Printf("Lexer initialization error: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Printf("📄 Lexing: %s\n", filename)
 	fmt.Println("─────────────────────────────────────────────────────────────────")
-	fmt.Printf("%-4s %-3s %-15s %-20s %s\n", "Line", "Col", "Kind", "Value", "Raw")
+	fmt.Printf("%-4s %-3s %-15s %s\n", "Line", "Col", "Kind", "Value")
 	fmt.Println("─────────────────────────────────────────────────────────────────")
 
 	tokenCount := 0
 	for {
-		token := lexer.NextToken()
-		if token.Kind == box.EOF {
+		token, err := lexer.NextToken()
+		if err != nil {
+			fmt.Printf("Lexer error: %v\n", err)
 			break
 		}
 
-		// Skip comments for cleaner output unless they're interesting
-		if token.Kind == box.COMMENT {
-			continue
+		if token.EOF {
+			break
 		}
 
+		// Display the token
+		value := token.Value
+		if token.Type == "Newline" {
+			value = "\\n"
+		} else if len(value) > 50 {
+			value = value[:47] + "..."
+		}
+
+		fmt.Printf("%-4d %-3d %-15s %s\n", token.Line, token.Column, token.Type, value)
 		tokenCount++
-
-		// Format value for display
-		displayValue := token.Value
-		if len(displayValue) > 18 {
-			displayValue = displayValue[:15] + "..."
-		}
-
-		// Show raw representation
-		raw := token.Value
-		if token.Kind == box.SINGLE_QUOTE {
-			raw = "'" + token.Value + "'"
-		} else if token.Kind == box.DOUBLE_QUOTE {
-			raw = "\"" + token.Value + "\""
-		} else if token.Kind == box.COMMAND_SUB {
-			if !strings.HasPrefix(token.Value, "$(") {
-				raw = "`" + token.Value + "`"
-			} else {
-				raw = "$(" + token.Value + ")"
-			}
-		} else if token.Kind == box.VARIABLE {
-			raw = "$" + token.Value
-		} else if token.Kind == box.HEADER_LOOKUP {
-			raw = "${" + token.Value + "}"
-		} else if token.Kind == box.HEADER_START {
-			raw = token.Value
-		}
-
-		fmt.Printf("%-4d %-3d %-15s %-20s %s\n",
-			token.Line, token.Column, token.Kind.String(), displayValue, raw)
 	}
 
 	fmt.Println("─────────────────────────────────────────────────────────────────")
-	fmt.Printf("✅ Lexed %d tokens successfully\n", tokenCount)
+	fmt.Printf("✅ Lexed %d tokens\n", tokenCount)
 }
 
 func astDebug(filename string) {
@@ -142,16 +129,24 @@ func astDebug(filename string) {
 		os.Exit(1)
 	}
 
-	lexer := box.NewLexer(string(content), filename)
-	parser := box.NewParser(lexer)
+	parser, err := box.NewParticleParser(filename)
+	if err != nil {
+		fmt.Printf("Parser initialization error: %v\n", err)
+		os.Exit(1)
+	}
 
-	program, err := parser.Parse()
+	program, err := parser.ParseString(string(content))
 	if err != nil {
 		if boxErr, ok := err.(*box.BoxError); ok {
 			fmt.Print(box.FormatError(boxErr))
 		} else {
 			fmt.Printf("Parse error: %v\n", err)
 		}
+		
+		// Show raw tokens when parsing fails
+		fmt.Println("\n📄 Raw Tokens (for debugging):")
+		fmt.Println("─────────────────────────────────────────────────────────────────")
+		showRawTokens(filename, string(content))
 		os.Exit(1)
 	}
 
@@ -272,7 +267,7 @@ func formatExpression(expr box.Expr) string {
 			return fmt.Sprintf("${%s[%s]}", v.Name, *v.Index)
 		}
 		return "$" + v.Name
-	case *box.HeaderLookupExpr:
+	case *box.BlockLookupExpr:
 		return "${" + v.Path + "}"
 	case *box.CommandSubExpr:
 		return "`" + v.Command + "`"
@@ -285,7 +280,7 @@ func formatBlockType(blockType box.BlockType) string {
 	switch blockType {
 	case box.MainBlock:
 		return "main"
-	case box.FnBlock:
+	case box.FuncBlock:
 		return "fn"
 	case box.DataBlock:
 		return "data"
@@ -294,4 +289,42 @@ func formatBlockType(blockType box.BlockType) string {
 	default:
 		return "unknown"
 	}
+}
+
+func showRawTokens(filename, content string) {
+	lexer, err := box.NewLexerForDebug(content, filename)
+	if err != nil {
+		fmt.Printf("Error creating lexer: %v\n", err)
+		return
+	}
+	
+	fmt.Printf("%-4s %-3s %-15s %s\n", "Line", "Col", "Kind", "Value")
+	fmt.Println("─────────────────────────────────────────────────────────────────")
+	
+	tokenCount := 0
+	for {
+		token, err := lexer.NextToken()
+		if err != nil {
+			fmt.Printf("Lexer error: %v\n", err)
+			break
+		}
+		
+		if token.EOF {
+			break
+		}
+		
+		tokenCount++
+		
+		// Format value for display
+		displayValue := token.Value
+		if len(displayValue) > 50 {
+			displayValue = displayValue[:47] + "..."
+		}
+		
+		fmt.Printf("%-4d %-3d %-15s %s\n",
+			token.Line, token.Column, token.Type, displayValue)
+	}
+	
+	fmt.Println("─────────────────────────────────────────────────────────────────")
+	fmt.Printf("✅ Lexed %d tokens\n", tokenCount)
 }

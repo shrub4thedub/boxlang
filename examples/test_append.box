@@ -1,0 +1,12 @@
+[main]
+  set buf "initial"
+  echo "Initial buffer: ${buf[*]}"
+  
+  set line "new line"
+  set buf ${buf[*]} $line
+  echo "After append: ${buf[*]}"
+  
+  set line "another line"  
+  set buf ${buf[*]} $line
+  echo "After second append: ${buf[*]}"
+end

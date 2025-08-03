@@ -1,0 +1,24 @@
+[main]
+  set file $1
+  echo "File: $file"
+  set buf
+  echo "Buffer initialized"
+  set curr 0
+  echo "Current line: $curr"
+  
+  echo "Starting main loop..."
+  while true
+    prompt ":"
+    set cmd $reply
+    echo "Command entered: $cmd"
+    
+    if match $cmd "q"
+      echo "Quit command detected"
+      break
+    end
+    
+    echo "Command not quit, continuing..."
+  end
+  
+  echo "Exited main loop"
+end

@@ -1,0 +1,10 @@
+[main]
+  while true
+    prompt ":"
+    set cmd $reply
+    if match $cmd "q"
+      break
+    end
+    echo "You entered: $cmd"
+  end
+end

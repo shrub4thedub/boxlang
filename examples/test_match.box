@@ -1,0 +1,16 @@
+[main]
+  set cmd "a"
+  echo "Testing match with cmd='$cmd'"
+  
+  if match $cmd "a"
+    echo "Match succeeded for 'a'"
+  end
+  
+  if match $cmd "q"
+    echo "Match succeeded for 'q'"  
+  end
+  
+  echo "Direct match test:"
+  match $cmd "a"
+  echo "Match result status: $status"
+end

@@ -1,0 +1,51 @@
+[fn writebuf file]
+  echo "Writing buffer to $file"
+  join "\n" ${buf[*]} | run tee $file
+end
+
+[fn append]
+  echo "Entering append mode. Type '.' on a line by itself to exit."
+  while true
+    prompt ""
+    set line $reply
+    echo "Got line: '$line'"
+    if match $line "."
+      echo "Exiting append mode"
+      return 0
+    end
+    set buf ${buf[*]} $line
+    echo "Added line to buffer"
+  end
+end
+
+[main]
+  set file $1
+  echo "Editing file: $file"
+  set buf
+  set curr 0
+
+  while true
+    prompt ":"
+    set cmd $reply
+    echo "Command: '$cmd'"
+
+    if match $cmd "q"
+      echo "Quitting"
+      break
+    end
+
+    if match $cmd "a"
+      echo "Append command"
+      append
+      continue
+    end
+
+    if match $cmd "w"
+      echo "Write command"
+      writebuf $file
+      continue
+    end
+
+    echo "Unknown command: $cmd"
+  end
+end

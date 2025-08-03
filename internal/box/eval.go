@@ -23,11 +23,12 @@ func (v Value) List() []string {
 }
 
 type Scope struct {
-	Variables  map[string]Value
-	Functions  map[string]*Block
-	Data       map[string]map[string]Value
-	Namespaces map[string]map[string]*Block // Imported namespaces
-	Parent     *Scope
+	Variables         map[string]Value
+	Functions         map[string]*Block
+	Data              map[string]map[string]Value
+	Namespaces        map[string]map[string]*Block // Imported namespaces
+	CurrentNamespace  string                       // Current namespace context for function calls
+	Parent            *Scope
 }
 
 func NewScope() *Scope {
@@ -63,10 +64,21 @@ func (s *Scope) Child() *Scope {
 	}
 }
 
+type HaltType int
+
+const (
+	NoHalt HaltType = iota
+	BreakHalt
+	ContinueHalt  
+	ReturnHalt
+	ExitHalt
+)
+
 type Result struct {
-	Status int
-	Halt   bool
-	Error  error
+	Status   int
+	Halt     bool      // Kept for backward compatibility
+	HaltType HaltType  // More specific halt reason
+	Error    error
 }
 
 type Evaluator struct {
@@ -276,18 +288,30 @@ func (e *Evaluator) evalIf(block *Block) Result {
 			switch v := item.(type) {
 			case Cmd:
 				result := e.evalCommand(&v)
-				if result.Error != nil || result.Halt {
+				if result.Error != nil {
+					return result
+				}
+				if result.Halt {
+					// For if statements, propagate all halt types up
 					return result
 				}
 			case Pipeline:
 				result := e.evalPipeline(&v)
-				if result.Error != nil || result.Halt {
+				if result.Error != nil {
+					return result
+				}
+				if result.Halt {
+					// For if statements, propagate all halt types up
 					return result
 				}
 			case Block:
 				if v.Label != "else" {
 					result := e.evalControlStructure(&v)
-					if result.Error != nil || result.Halt {
+					if result.Error != nil {
+						return result
+					}
+					if result.Halt {
+						// For if statements, propagate all halt types up
 						return result
 					}
 				}
@@ -322,21 +346,64 @@ func (e *Evaluator) evalFor(block *Block) Result {
 			switch v := bodyItem.(type) {
 			case Cmd:
 				result := e.evalCommand(&v)
-				if result.Error != nil || result.Halt {
+				if result.Error != nil {
 					return result
+				}
+				if result.Halt {
+					// Handle different halt types
+					switch result.HaltType {
+					case BreakHalt:
+						// Break out of for loop
+						return Result{Status: result.Status}
+					case ContinueHalt:
+						// Continue to next iteration
+						goto nextIteration
+					case ReturnHalt, ExitHalt:
+						// Return from function or exit program - propagate up
+						return result
+					}
 				}
 			case Pipeline:
 				result := e.evalPipeline(&v)
-				if result.Error != nil || result.Halt {
+				if result.Error != nil {
 					return result
+				}
+				if result.Halt {
+					// Handle different halt types
+					switch result.HaltType {
+					case BreakHalt:
+						// Break out of for loop
+						return Result{Status: result.Status}
+					case ContinueHalt:
+						// Continue to next iteration
+						goto nextIteration
+					case ReturnHalt, ExitHalt:
+						// Return from function or exit program - propagate up
+						return result
+					}
 				}
 			case Block:
 				result := e.evalControlStructure(&v)
-				if result.Error != nil || result.Halt {
+				if result.Error != nil {
 					return result
+				}
+				if result.Halt {
+					// Handle different halt types
+					switch result.HaltType {
+					case BreakHalt:
+						// Break out of for loop
+						return Result{Status: result.Status}
+					case ContinueHalt:
+						// Continue to next iteration
+						goto nextIteration
+					case ReturnHalt, ExitHalt:
+						// Return from function or exit program - propagate up
+						return result
+					}
 				}
 			}
 		}
+		nextIteration:
 	}
 
 	return Result{Status: 0}
@@ -369,27 +436,74 @@ func (e *Evaluator) evalWhile(block *Block) Result {
 			switch v := bodyItem.(type) {
 			case Cmd:
 				result := e.evalCommand(&v)
-				if result.Error != nil || result.Halt {
+				if result.Error != nil {
 					return result
+				}
+				if result.Halt {
+					// Handle different halt types
+					switch result.HaltType {
+					case BreakHalt:
+						// Break out of while loop
+						return Result{Status: result.Status}
+					case ContinueHalt:
+						// Continue to next iteration
+						goto nextIteration
+					case ReturnHalt, ExitHalt:
+						// Return from function or exit program - propagate up
+						return result
+					}
 				}
 			case Pipeline:
 				result := e.evalPipeline(&v)
-				if result.Error != nil || result.Halt {
+				if result.Error != nil {
 					return result
+				}
+				if result.Halt {
+					// Handle different halt types
+					switch result.HaltType {
+					case BreakHalt:
+						// Break out of while loop
+						return Result{Status: result.Status}
+					case ContinueHalt:
+						// Continue to next iteration
+						goto nextIteration
+					case ReturnHalt, ExitHalt:
+						// Return from function or exit program - propagate up
+						return result
+					}
 				}
 			case Block:
 				result := e.evalControlStructure(&v)
-				if result.Error != nil || result.Halt {
+				if result.Error != nil {
 					return result
+				}
+				if result.Halt {
+					// Handle different halt types
+					switch result.HaltType {
+					case BreakHalt:
+						// Break out of while loop
+						return Result{Status: result.Status}
+					case ContinueHalt:
+						// Continue to next iteration
+						goto nextIteration
+					case ReturnHalt, ExitHalt:
+						// Return from function or exit program - propagate up
+						return result
+					}
 				}
 			}
 		}
+		nextIteration:
 	}
 
 	return Result{Status: 0}
 }
 
 func (e *Evaluator) callFunction(fn *Block, args []string) Result {
+	return e.callFunctionWithNamespace(fn, args, "")
+}
+
+func (e *Evaluator) callFunctionWithNamespace(fn *Block, args []string, namespace string) Result {
 	// Create new scope for function call
 	childScope := e.scope.Child()
 	// Copy parent's data to child scope but NOT functions to avoid recursion
@@ -397,6 +511,9 @@ func (e *Evaluator) callFunction(fn *Block, args []string) Result {
 	for name, dataMap := range rootScope.Data {
 		childScope.Data[name] = dataMap
 	}
+	
+	// Set the current namespace context
+	childScope.CurrentNamespace = namespace
 
 	oldScope := e.scope
 	e.scope = childScope
@@ -430,15 +547,64 @@ func (e *Evaluator) callFunction(fn *Block, args []string) Result {
 
 	result := e.evalBlock(fn)
 
-	// Propagate status back to parent
+	// Propagate all variables back to parent scope
 	if oldScope != nil {
-		oldScope.Set("status", e.scope.Variables["status"])
+		for name, value := range e.scope.Variables {
+			oldScope.Set(name, value)
+		}
 	}
 
-	// Returning from a function should not halt the caller
-	result.Halt = false
+	// Handle return from function properly
+	if result.Halt && result.HaltType == ReturnHalt {
+		// Return from function should not halt the caller
+		result.Halt = false
+		result.HaltType = NoHalt
+	}
+	// Other halt types (ExitHalt) should propagate up
 
 	return result
+}
+
+// handleNonLocalFunction handles namespaced function calls and builtin commands
+func (e *Evaluator) handleNonLocalFunction(cmd *Cmd, args []Value) Result {
+	if strings.Contains(cmd.Verb, ".") {
+		// Handle namespaced function calls like "util.helper"
+		parts := strings.Split(cmd.Verb, ".")
+		if len(parts) == 2 {
+			namespace := parts[0]
+			functionName := parts[1]
+
+			if namespaceBlocks, exists := e.getRootScope().Namespaces[namespace]; exists {
+				if fn, exists := namespaceBlocks[functionName]; exists {
+					var strArgs []string
+					for _, arg := range args {
+						strArgs = append(strArgs, arg.String())
+					}
+					return e.callFunctionWithNamespace(fn, strArgs, namespace)
+				} else {
+					return Result{Error: &BoxError{Message: fmt.Sprintf("function '%s' not found in namespace '%s'", functionName, namespace)}}
+				}
+			} else {
+				return Result{Error: &BoxError{Message: fmt.Sprintf("namespace '%s' not found", namespace)}}
+			}
+		} else {
+			return Result{Error: &BoxError{Message: fmt.Sprintf("invalid namespaced function call: %s", cmd.Verb)}}
+		}
+	} else if builtin, ok := e.builtins[cmd.Verb]; ok {
+		// Check for builtin
+		return builtin(args, e.scope)
+	} else {
+		// Unknown command - fail with helpful error
+		return Result{Error: &BoxError{
+			Message: fmt.Sprintf("unknown command: %s", cmd.Verb),
+			Location: Location{
+				Filename: e.filename,
+				Line:     cmd.Line,
+				Column:   cmd.Column,
+			},
+			Help: fmt.Sprintf("'%s' is not a built-in verb. Box only supports internal commands.", cmd.Verb),
+		}}
+	}
 }
 
 func (e *Evaluator) evalCommand(cmd *Cmd) Result {
@@ -501,43 +667,23 @@ func (e *Evaluator) evalCommand(cmd *Cmd) Result {
 			strArgs = append(strArgs, arg.String())
 		}
 		result = e.callFunction(fn, strArgs)
-	} else if strings.Contains(cmd.Verb, ".") {
-		// Handle namespaced function calls like "util.helper"
-		parts := strings.Split(cmd.Verb, ".")
-		if len(parts) == 2 {
-			namespace := parts[0]
-			functionName := parts[1]
-
-			if namespaceBlocks, exists := e.getRootScope().Namespaces[namespace]; exists {
-				if fn, exists := namespaceBlocks[functionName]; exists {
-					var strArgs []string
-					for _, arg := range args {
-						strArgs = append(strArgs, arg.String())
-					}
-					result = e.callFunction(fn, strArgs)
-				} else {
-					result = Result{Error: &BoxError{Message: fmt.Sprintf("function '%s' not found in namespace '%s'", functionName, namespace)}}
+	} else if e.scope.CurrentNamespace != "" {
+		// Check for function in current namespace context
+		if namespaceBlocks, exists := e.getRootScope().Namespaces[e.scope.CurrentNamespace]; exists {
+			if fn, exists := namespaceBlocks[cmd.Verb]; exists {
+				var strArgs []string
+				for _, arg := range args {
+					strArgs = append(strArgs, arg.String())
 				}
+				result = e.callFunction(fn, strArgs)
 			} else {
-				result = Result{Error: &BoxError{Message: fmt.Sprintf("namespace '%s' not found", namespace)}}
+				result = e.handleNonLocalFunction(cmd, args)
 			}
 		} else {
-			result = Result{Error: &BoxError{Message: fmt.Sprintf("invalid namespaced function call: %s", cmd.Verb)}}
+			result = e.handleNonLocalFunction(cmd, args)
 		}
-	} else if builtin, ok := e.builtins[cmd.Verb]; ok {
-		// Check for builtin
-		result = builtin(args, e.scope)
 	} else {
-		// Unknown command - fail with helpful error
-		result = Result{Error: &BoxError{
-			Message: fmt.Sprintf("unknown command: %s", cmd.Verb),
-			Location: Location{
-				Filename: e.filename,
-				Line:     cmd.Line,
-				Column:   cmd.Column,
-			},
-			Help: fmt.Sprintf("'%s' is not a built-in verb. Box only supports internal commands.", cmd.Verb),
-		}}
+		result = e.handleNonLocalFunction(cmd, args)
 	}
 
 	// Restore stdout/stderr after command execution

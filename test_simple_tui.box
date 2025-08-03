@@ -1,0 +1,31 @@
+import tui_simple
+
+[main]
+  tui_simple.banner "Simple TUI Test"
+  
+  tui_simple.section "Colors"
+  tui_simple.red "Red text"
+  tui_simple.green "Green text"
+  tui_simple.blue "Blue text"
+  
+  tui_simple.section "Status"
+  tui_simple.success "Success message"
+  tui_simple.error "Error message"
+  tui_simple.warning "Warning message"
+  tui_simple.info "Info message"
+  
+  tui_simple.section "Layout"
+  tui_simple.box "Text in a box"
+  tui_simple.separator
+  
+  tui_simple.section "Lists"
+  tui_simple.list_item "Item 1"
+  tui_simple.list_item "Item 2"
+  tui_simple.numbered_item 1 "First"
+  tui_simple.numbered_item 2 "Second"
+  
+  tui_simple.section "Animation"
+  tui_simple.dots "Loading" 3
+  
+  tui_simple.success "Simple TUI demo complete!"
+end

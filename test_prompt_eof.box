@@ -1,0 +1,8 @@
+[main]
+  echo "Testing prompt EOF handling"
+  set reply "initial"
+  echo "Before prompt: reply='$reply'"
+  prompt ":"
+  echo "After prompt: reply='$reply'"
+  echo "Prompt status: $status"
+end

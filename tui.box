@@ -1,0 +1,347 @@
+# TUI Library for Box
+# Simple terminal output utilities for CLI applications
+
+[data tui_colors]
+  reset "\033[0m"
+  bold "\033[1m"
+  dim "\033[2m"
+  underline "\033[4m"
+  
+  # Foreground colors
+  black "\033[30m"
+  red "\033[31m"
+  green "\033[32m"
+  yellow "\033[33m"
+  blue "\033[34m"
+  magenta "\033[35m"
+  cyan "\033[36m"
+  white "\033[37m"
+  
+  # Bright foreground colors
+  bright_black "\033[90m"
+  bright_red "\033[91m"
+  bright_green "\033[92m"
+  bright_yellow "\033[93m"
+  bright_blue "\033[94m"
+  bright_magenta "\033[95m"
+  bright_cyan "\033[96m"
+  bright_white "\033[97m"
+  
+  # Background colors
+  bg_black "\033[40m"
+  bg_red "\033[41m"
+  bg_green "\033[42m"
+  bg_yellow "\033[43m"
+  bg_blue "\033[44m"
+  bg_magenta "\033[45m"
+  bg_cyan "\033[46m"
+  bg_white "\033[47m"
+end
+
+# Basic Terminal Control Functions - Terminal width set to default 80
+
+# Color Functions
+[fn red text]
+  echo "${tui_colors.red}$text${tui_colors.reset}"
+end
+
+[fn green text]
+  echo "${tui_colors.green}$text${tui_colors.reset}"
+end
+
+[fn yellow text]
+  echo "${tui_colors.yellow}$text${tui_colors.reset}"
+end
+
+[fn blue text]
+  echo "${tui_colors.blue}$text${tui_colors.reset}"
+end
+
+[fn cyan text]
+  echo "${tui_colors.cyan}$text${tui_colors.reset}"
+end
+
+[fn magenta text]
+  echo "${tui_colors.magenta}$text${tui_colors.reset}"
+end
+
+[fn bold text]
+  echo "${tui_colors.bold}$text${tui_colors.reset}"
+end
+
+[fn dim text]
+  echo "${tui_colors.dim}$text${tui_colors.reset}"
+end
+
+[fn underline text]
+  echo "${tui_colors.underline}$text${tui_colors.reset}"
+end
+
+# Status Functions
+[fn success message]
+  echo "${tui_colors.green}✓ $message${tui_colors.reset}"
+end
+
+[fn error message]
+  echo "${tui_colors.red}✗ $message${tui_colors.reset}"
+end
+
+[fn warning message]
+  echo "${tui_colors.yellow}⚠ $message${tui_colors.reset}"
+end
+
+[fn info message]
+  echo "${tui_colors.blue}ℹ $message${tui_colors.reset}"
+end
+
+[fn loading message]
+  echo "${tui_colors.cyan}⟳ $message...${tui_colors.reset}"
+end
+
+# Helper Functions  
+[fn repeat_char char count]
+  if test $count -le 0
+    set _repeat_char_result ""
+  elif test $count -eq 1
+    set _repeat_char_result "$char"
+  elif test $count -eq 2
+    set _repeat_char_result "$char$char"
+  elif test $count -eq 3
+    set _repeat_char_result "$char$char$char"
+  elif test $count -le 10
+    set _repeat_char_result "$char$char$char$char$char$char$char$char$char$char"
+  elif test $count -le 20
+    set _repeat_char_result "$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char"
+  else
+    set _repeat_char_result "$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char$char"
+  end
+end
+
+# Layout Functions
+[fn banner text]
+  echo ""
+  echo "${tui_colors.bold}================================================================================${tui_colors.reset}"
+  echo "${tui_colors.bold}  $text${tui_colors.reset}"
+  echo "${tui_colors.bold}================================================================================${tui_colors.reset}"
+  echo ""
+end
+
+[fn section title]
+  echo ""
+  echo "${tui_colors.bold}━━ $title ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${tui_colors.reset}"
+  echo ""
+end
+
+[fn header text]
+  set content_width 76
+  
+  echo ""
+  repeat_char "─" $content_width
+  set top_line $_repeat_char_result
+  arith $content_width - ${#text}
+  set temp $_arith_result
+  arith $temp - 1
+  set space_count $_arith_result
+  repeat_char " " $space_count
+  set spaces $_repeat_char_result
+  echo "${tui_colors.cyan}┌$top_line┐${tui_colors.reset}"
+  echo "${tui_colors.cyan}│ $text$spaces│${tui_colors.reset}"
+  echo "${tui_colors.cyan}└$top_line┘${tui_colors.reset}"
+  echo ""
+end
+
+[fn box text width="40"]
+  arith $width - 4
+  set content_width $_arith_result
+  
+  repeat_char "─" $content_width
+  set line $_repeat_char_result
+  arith $content_width - ${#text}
+  set temp $_arith_result
+  arith $temp - 1
+  set space_count $_arith_result
+  repeat_char " " $space_count
+  set spaces $_repeat_char_result
+  
+  echo "┌$line┐"
+  echo "│ $text$spaces│"
+  echo "└$line┘"
+end
+
+[fn separator char="─" width=""]
+  if test -z "$width"
+    set width 80
+  end
+  repeat_char $char $width
+  echo $_repeat_char_result
+end
+
+# Progress Functions
+[fn progress label current total width="30"]
+  arith $current * $width
+  set temp $_arith_result
+  arith $temp / $total
+  set filled $_arith_result
+  arith $width - $filled
+  set empty $_arith_result
+  
+  arith $current * 100
+  set temp $_arith_result
+  arith $temp / $total
+  set percent $_arith_result
+  
+  repeat_char "█" $filled
+  set filled_bar $_repeat_char_result
+  repeat_char "░" $empty
+  set empty_bar $_repeat_char_result
+  
+  echo -n "$label: ["
+  echo -n "${tui_colors.green}$filled_bar${tui_colors.reset}"
+  echo -n "$empty_bar"
+  echo "] $percent% ($current/$total)"
+end
+
+# List Functions
+[fn list_item text]
+  echo "• $text"
+end
+
+[fn numbered_item number text]
+  echo "$number. $text"
+end
+
+[fn indent level text]
+  arith $level * 2
+  set space_count $_arith_result
+  repeat_char " " $space_count
+  set spaces $_repeat_char_result
+  echo "$spaces$text"
+end
+
+# Animation Functions
+
+[fn spinner message frame]
+  arith $frame % 10
+  set idx $_arith_result
+  if test $idx -eq 0
+    set spinner_char "⠋"
+  elif test $idx -eq 1
+    set spinner_char "⠙"
+  elif test $idx -eq 2
+    set spinner_char "⠹"
+  elif test $idx -eq 3
+    set spinner_char "⠸"
+  elif test $idx -eq 4
+    set spinner_char "⠼"
+  elif test $idx -eq 5
+    set spinner_char "⠴"
+  elif test $idx -eq 6
+    set spinner_char "⠦"
+  elif test $idx -eq 7
+    set spinner_char "⠧"
+  elif test $idx -eq 8
+    set spinner_char "⠇"
+  else
+    set spinner_char "⠏"
+  end
+  echo -n "\r${tui_colors.cyan}$spinner_char${tui_colors.reset} $message"
+end
+
+[fn animate_spinner message duration]
+  set frame 0
+  set i 0
+  echo -n "\n"
+  while test $i -lt $duration
+    arith $frame % 10
+    set idx $_arith_result
+    if test $idx -eq 0
+      set spinner_char "⠋"
+    elif test $idx -eq 1
+      set spinner_char "⠙"
+    elif test $idx -eq 2
+      set spinner_char "⠹"
+    elif test $idx -eq 3
+      set spinner_char "⠸"
+    elif test $idx -eq 4
+      set spinner_char "⠼"
+    elif test $idx -eq 5
+      set spinner_char "⠴"
+    elif test $idx -eq 6
+      set spinner_char "⠦"
+    elif test $idx -eq 7
+      set spinner_char "⠧"
+    elif test $idx -eq 8
+      set spinner_char "⠇"
+    else
+      set spinner_char "⠏"
+    end
+    echo -n "\r${tui_colors.cyan}$spinner_char${tui_colors.reset} $message"
+    sleep 0.1
+    arith $frame + 1
+    set frame $_arith_result
+    arith $i + 1
+    set i $_arith_result
+  end
+  echo "\r${tui_colors.green}✓${tui_colors.reset} $message - Done!"
+end
+
+[fn animate_progress label total duration]
+  set step 0
+  echo -n "\n"
+  while test $step -le $total
+    echo -n "\r$label: ["
+    
+    arith $step * 30 / $total
+    set filled $_arith_result
+    arith 30 - $filled
+    set empty $_arith_result
+    
+    arith $step * 100 / $total
+    set percent $_arith_result
+    
+    repeat_char "█" $filled
+    set filled_bar $_repeat_char_result
+    repeat_char "░" $empty
+    set empty_bar $_repeat_char_result
+    
+    echo -n "${tui_colors.green}$filled_bar${tui_colors.reset}"
+    echo -n "$empty_bar"
+    echo -n "] $percent% ($step/$total)"
+    
+    if test $step -lt $total
+      sleep 0.1
+    end
+    
+    arith $step + 1
+    set step $_arith_result
+  end
+  echo "\n${tui_colors.green}✓${tui_colors.reset} $label - Complete!"
+end
+
+[fn dots message count]
+  echo -n "$message"
+  set i 0
+  while test $i -lt $count
+    echo -n "."
+    sleep 0.3
+    arith $i + 1
+    set i $_arith_result
+  end
+  echo ""
+end
+
+# Utility Functions
+[fn ask question]
+  echo -n "$question (y/n): "
+  prompt ""
+  if match $reply "y" || match $reply "Y" || match $reply "yes" || match $reply "Yes"
+    return 0
+  else
+    return 1
+  end
+end
+
+[fn pause message="Press Enter to continue..."]
+  echo -n "$message"
+  prompt ""
+end

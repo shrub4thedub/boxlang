@@ -736,7 +736,7 @@ func builtinExit(args []Value, scope *Scope) Result {
 		}
 	}
 
-	return Result{Status: status, Halt: true}
+	return Result{Status: status, Halt: true, HaltType: ExitHalt}
 }
 
 func builtinReturn(args []Value, scope *Scope) Result {
@@ -750,7 +750,7 @@ func builtinReturn(args []Value, scope *Scope) Result {
 	// Update status variable before returning
 	scope.Set("status", Value{strconv.Itoa(status)})
 
-	return Result{Status: status, Halt: true}
+	return Result{Status: status, Halt: true, HaltType: ReturnHalt}
 }
 
 func builtinCd(args []Value, scope *Scope) Result {
@@ -768,11 +768,11 @@ func builtinCd(args []Value, scope *Scope) Result {
 
 // Additional built-ins for control flow
 func builtinBreak(args []Value, scope *Scope) Result {
-	return Result{Status: 0, Halt: true} // Special break signal
+	return Result{Status: 0, Halt: true, HaltType: BreakHalt}
 }
 
 func builtinContinue(args []Value, scope *Scope) Result {
-	return Result{Status: 0, Halt: true} // Special continue signal
+	return Result{Status: 0, Halt: true, HaltType: ContinueHalt}
 }
 
 // Built-ins for testing conditions

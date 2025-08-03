@@ -1,0 +1,14 @@
+[main]
+  set count 0
+  while true
+    arith $count + 1
+    set count $_arith_result
+    echo "Iteration $count"
+    
+    if match $count "3"
+      echo "Breaking at 3"
+      break
+    end
+  end
+  echo "Done with while loop"
+end

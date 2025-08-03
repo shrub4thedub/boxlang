@@ -22,9 +22,14 @@ end
   set file $1
   set buf
   set curr 0
+  set reply ""
 
   while true
     prompt ":"
+    if match $status "1"
+      # EOF reached, exit
+      break
+    end
     set cmd $reply
 
     if match $cmd "q"

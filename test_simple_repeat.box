@@ -1,0 +1,6 @@
+import tui
+
+[main]
+  tui.red "Testing internal function calls"
+  tui.success "This should work"
+end

@@ -1,0 +1,8 @@
+import tui
+
+[main]
+  tui.red "This should be red"
+  tui.green "This should be green"
+  tui.success "This should be success"
+  tui.error "This should be error"
+end

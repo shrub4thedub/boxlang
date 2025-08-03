@@ -1,0 +1,22 @@
+[fn test_function]
+  echo "Function: Starting while loop"
+  set i 0
+  while true
+    arith $i + 1
+    set i $_arith_result
+    echo "Function: Loop iteration $i"
+    
+    if match $i "2"
+      echo "Function: Returning from function at iteration 2"
+      return 0
+    end
+  end
+  echo "Function: This should never print"
+end
+
+[main]
+  echo "Main: Calling function"
+  test_function
+  echo "Main: Function returned with status $status"
+  echo "Main: Continuing after function call"
+end

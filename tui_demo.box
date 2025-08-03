@@ -1,0 +1,81 @@
+#!/usr/bin/env box
+
+# Import the TUI library
+import tui
+
+[main]
+  tui.banner "TUI Library Demo"
+  
+  tui.section "Colors and Styles"
+  tui.red "This is red text"
+  tui.green "This is green text"
+  tui.blue "This is blue text"
+  tui.yellow "This is yellow text"
+  tui.cyan "This is cyan text"
+  tui.magenta "This is magenta text"
+  tui.bold "This is bold text"
+  tui.dim "This is dimmed text"
+  tui.underline "This is underlined text"
+  
+  tui.section "Status Messages"
+  tui.success "Operation completed successfully"
+  tui.info "Here's some information"
+  tui.warning "This is a warning message"
+  tui.error "Something went wrong"
+  tui.loading "Processing data"
+  
+  tui.section "Progress Bars"
+  tui.progress "Download" 25 100
+  tui.progress "Install" 50 100
+  tui.progress "Configure" 75 100
+  tui.progress "Complete" 100 100
+  
+  tui.section "Boxes and Separators"
+  tui.box "This is text in a box" 50
+  tui.separator "─"
+  tui.separator "="
+  tui.separator "*" 20
+  
+  tui.section "Lists"
+  tui.list_item "First item"
+  tui.list_item "Second item"
+  tui.list_item "Third item"
+  echo ""
+  tui.numbered_item 1 "Numbered item one"
+  tui.numbered_item 2 "Numbered item two"
+  tui.numbered_item 3 "Numbered item three"
+  
+  tui.section "Indentation"
+  echo "Level 0"
+  tui.indent 1 "Level 1"
+  tui.indent 2 "Level 2"
+  tui.indent 3 "Level 3"
+  
+  tui.section "Animations"
+  echo "Demonstrating animated features..."
+  echo ""
+  
+  tui.dots "Loading" 5
+  echo ""
+  
+  tui.animate_spinner "Processing files" 20
+  echo ""
+  
+  tui.animate_progress "Downloading" 10 20
+  echo ""
+  
+  tui.section "Interactive Elements"
+  echo "Try the interactive features:"
+  
+  if tui.ask "Do you like this TUI library?"
+    tui.success "Great! Thanks for the feedback"
+  else
+    tui.info "Thanks for trying it anyway"
+  end
+  
+  tui.pause "Press Enter to see a header..."
+  
+  tui.header "This is a full-width header"
+  
+  tui.success "Demo complete!"
+end

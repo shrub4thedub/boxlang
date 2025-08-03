@@ -1,0 +1,6 @@
+import tui
+
+[main]
+  tui.repeat_char "=" 10
+  echo "Result: $_repeat_char_result"
+end

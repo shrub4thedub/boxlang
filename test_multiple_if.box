@@ -1,0 +1,17 @@
+[main]
+  set cmd "test"
+  
+  if match $cmd "a"
+    echo "Found a"
+  end
+  
+  if match $cmd "b"  
+    echo "Found b"
+  end
+  
+  if match $cmd "test"
+    echo "Found test"
+  end
+  
+  echo "Done"
+end

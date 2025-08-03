@@ -1,0 +1,11 @@
+[fn test_return]
+  echo "Before return"
+  return 0
+  echo "After return - should not print"
+end
+
+[main]
+  echo "Calling function"
+  test_return
+  echo "Back from function"
+end

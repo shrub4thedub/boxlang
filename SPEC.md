@@ -1,9 +1,9 @@
 BOX - shell.
 ---
 
-## 0 Philosophy at a glance
+## 0 Design goals/ philosophy 
 
-| Pillar                            | Concrete rule                                                                |
+|Pillar                            | Concrete rule                                                                |
 | --------------------------------- | ---------------------------------------------------------------------------- |
 | Lists everywhere                  | Every variable is a **list of strings**; no implicit word-splitting.         |
 | One postcard of grammar           | Only 13 token kinds; every block ends with `end`.                            |
@@ -11,7 +11,7 @@ BOX - shell.
 | Extensible by verbs, never syntax | New power arrives as **built-ins** written in C; the grammar never changes.  |
 
 
-Think “Plan 9 rc with Make-like determinism and a ketogenic diet, written in golang”
+inspired by plan9 rc but with make-style determinstic behaviour
 
 ---
 
@@ -33,7 +33,7 @@ Think “Plan 9 rc with Make-like determinism and a ketogenic diet, written in g
 | **comment**           | `# every token after # is ignored to EOL` | Whitespace not required before `#`. |
 
 > **No other punctuation is reserved.**
-> Semicolons, braces `{}`, background `&`, and here-docs intentionally do **not** exist.
+> Semicolons, braces `{}`, background `&`, and here-docs intentionally do **not** exist because they are fucking ugly
 
 ---
 
@@ -61,7 +61,7 @@ end
 ### Importing other files
 
 Use `import path/to/file.box` to pull in code from another file. Box derives a
-namespace from the filename—`util.box` becomes `util`. Functions and data inside
+namespace from the filename,`util.box` becomes `util`. Functions and data inside
 that file are then accessible as `util.fnname` or `util.block.field`. The
 imported file's `[main]` block is ignored. Re-importing the same path is a
 no-op, while namespace clashes raise an error. Only `.box` files are accepted.

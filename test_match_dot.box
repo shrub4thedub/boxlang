@@ -1,0 +1,12 @@
+[main]
+  set line "."
+  echo "Testing match with line='$line'"
+  
+  if match $line "."
+    echo "Match succeeded!"
+  end
+  
+  echo "Direct match test:"
+  match $line "."
+  echo "Match status: $status"
+end

@@ -1,0 +1,11 @@
+[main]
+  set result ""
+  set i 0
+  while test $i -lt 3
+    set result "${result}="
+    arith $i + 1
+    set i $_arith_result
+    echo "i is now: $i"
+  end
+  echo "Final result: $result"
+end

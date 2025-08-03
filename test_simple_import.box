@@ -1,0 +1,5 @@
+import tui
+
+[main]
+  echo "Testing simple import"
+end

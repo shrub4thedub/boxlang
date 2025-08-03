@@ -1,0 +1,22 @@
+[main]
+  # Test buffer operations like in ed.box
+  set buf
+  echo "Initial buf: '${buf[*]}'"
+  
+  # Add some lines like append function does
+  set buf ${buf[*]} "first line"
+  echo "After adding first line: '${buf[*]}'"
+  
+  set buf ${buf[*]} "second line"  
+  echo "After adding second line: '${buf[*]}'"
+  
+  # Test join
+  join "\n" ${buf[*]}
+  echo "After join (should see joined output above)"
+  
+  # Test writebuf equivalent
+  echo "Testing writebuf equivalent:"
+  join "\n" ${buf[*]} | run tee test_output.txt
+  echo "File contents:"
+  run cat test_output.txt
+end

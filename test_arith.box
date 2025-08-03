@@ -1,0 +1,17 @@
+[main]
+  set a 25
+  set b 30
+  set c 100
+  
+  echo "Testing basic arith:"
+  arith $a + $b
+  echo "Result: $_arith_result"
+  
+  echo "Testing division:"
+  arith $a / $b
+  echo "Result: $_arith_result"
+  
+  echo "Testing multiplication:"
+  arith $a * $b
+  echo "Result: $_arith_result"
+end

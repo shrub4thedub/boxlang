@@ -258,6 +258,23 @@ func (p *ParticleParser) parseTokens(lex lexer.Lexer) (*Program, error) {
 			continue
 		}
 		
+		// Handle import statements
+		if token.Type == boxLexer.Symbols()["Word"] && token.Value == "import" {
+			importStmt, newIndex, err := p.parseImport(tokens, i)
+			if err != nil {
+				return nil, err
+			}
+			
+			// Process the import
+			err = p.processImport(program, importStmt)
+			if err != nil {
+				return nil, err
+			}
+			
+			i = newIndex
+			continue
+		}
+		
 		// Handle blocks
 		if token.Type == boxLexer.Symbols()["BlockStart"] {
 			block, newIndex, err := p.parseBlock(tokens, i)
@@ -301,6 +318,124 @@ func (p *ParticleParser) parseTokens(lex lexer.Lexer) (*Program, error) {
 	return program, nil
 }
 
+// parseImport parses an import statement from tokens
+func (p *ParticleParser) parseImport(tokens []lexer.Token, startIndex int) (*ImportStmt, int, error) {
+	if startIndex >= len(tokens) {
+		return nil, startIndex, &BoxError{
+			Message: "unexpected end of input in import",
+			Location: Location{p.filename, 0, 0},
+		}
+	}
+	
+	// Expect "import" token
+	if tokens[startIndex].Value != "import" {
+		return nil, startIndex, &BoxError{
+			Message: "expected 'import'",
+			Location: Location{p.filename, 0, 0},
+		}
+	}
+	
+	// Expect path token
+	if startIndex+1 >= len(tokens) {
+		return nil, startIndex, &BoxError{
+			Message: "expected import path after 'import'",
+			Location: Location{p.filename, 0, 0},
+		}
+	}
+	
+	pathToken := tokens[startIndex+1]
+	if pathToken.Type != boxLexer.Symbols()["Word"] {
+		return nil, startIndex, &BoxError{
+			Message: "expected import path",
+			Location: Location{p.filename, 0, 0},
+		}
+	}
+	
+	importStmt := &ImportStmt{
+		Path: pathToken.Value,
+	}
+	
+	// Skip to next statement (consume newline if present)
+	i := startIndex + 2
+	if i < len(tokens) && tokens[i].Type == boxLexer.Symbols()["Newline"] {
+		i++
+	}
+	
+	return importStmt, i, nil
+}
+
+// processImport processes an import statement by loading the imported file
+func (p *ParticleParser) processImport(program *Program, importStmt *ImportStmt) error {
+	// Derive namespace from path (e.g., "utils/helper" -> "helper", "tui" -> "tui")
+	namespace := importStmt.Path
+	if strings.Contains(namespace, "/") {
+		parts := strings.Split(namespace, "/")
+		namespace = parts[len(parts)-1]
+	}
+	
+	// Construct full file path
+	var filePath string
+	if strings.HasSuffix(importStmt.Path, ".box") {
+		filePath = importStmt.Path
+	} else {
+		filePath = importStmt.Path + ".box"
+	}
+	
+	// Read the imported file
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return &BoxError{
+			Message: fmt.Sprintf("failed to read import file '%s': %v", filePath, err),
+			Location: Location{p.filename, 0, 0},
+		}
+	}
+	
+	// Parse the imported file
+	importParser, err := NewParticleParser(filePath)
+	if err != nil {
+		return &BoxError{
+			Message: fmt.Sprintf("failed to create parser for import '%s': %v", filePath, err),
+			Location: Location{p.filename, 0, 0},
+		}
+	}
+	
+	importedProgram, err := importParser.ParseString(string(content))
+	if err != nil {
+		return &BoxError{
+			Message: fmt.Sprintf("failed to parse import '%s': %v", filePath, err),
+			Location: Location{p.filename, 0, 0},
+		}
+	}
+	
+	// Create Import object
+	importObj := Import{
+		Path:      importStmt.Path,
+		Namespace: namespace,
+		Program:   importedProgram,
+	}
+	
+	// Add to program
+	program.Imports = append(program.Imports, importObj)
+	program.ImportMap[namespace] = &importObj
+	
+	// Add imported functions and data to namespaces
+	if program.Namespaces[namespace] == nil {
+		program.Namespaces[namespace] = make(map[string]*Block)
+	}
+	
+	// Copy functions from imported program to namespace
+	for name, block := range importedProgram.Functions {
+		program.Namespaces[namespace][name] = block
+	}
+	
+	// Copy data blocks from imported program to namespace
+	for name, block := range importedProgram.Data {
+		program.Namespaces[namespace][name] = block
+	}
+	
+	return nil
+}
+
 // parseBlock parses a block starting from a BlockStart token
 func (p *ParticleParser) parseBlock(tokens []lexer.Token, startIndex int) (*Block, int, error) {
 	blockToken := tokens[startIndex]
@@ -333,31 +468,24 @@ func (p *ParticleParser) parseBlock(tokens []lexer.Token, startIndex int) (*Bloc
 	bodyStart = i
 	
 	// Find matching end - need to track both block depth and control structure depth
-	fmt.Printf("DEBUG: parseBlock looking for matching end, starting depth=1 at bodyStart=%d\n", bodyStart)
 	blockDepth := 1  // Tracks nested blocks ([main], [fn], etc.)
 	controlDepth := 0  // Tracks nested control structures (if, while, for)
 	
 	for i < len(tokens) && blockDepth > 0 {
 		token := tokens[i]
-		fmt.Printf("DEBUG: parseBlock at %d: %s = %s, blockDepth=%d, controlDepth=%d\n", 
-			i, tokenTypeName(token.Type), token.Value, blockDepth, controlDepth)
 		
 		if token.Type == boxLexer.Symbols()["BlockStart"] {
 			blockDepth++
-			fmt.Printf("DEBUG: parseBlock found nested BlockStart, blockDepth now %d\n", blockDepth)
 		} else if token.Type == boxLexer.Symbols()["Word"] && 
 		          (token.Value == "while" || token.Value == "if" || token.Value == "for") {
 			controlDepth++
-			fmt.Printf("DEBUG: parseBlock found control structure start, controlDepth now %d\n", controlDepth)
 		} else if token.Type == boxLexer.Symbols()["BlockEnd"] {
 			if controlDepth > 0 {
 				// This 'end' closes a control structure, not a block
 				controlDepth--
-				fmt.Printf("DEBUG: parseBlock found control structure end, controlDepth now %d\n", controlDepth)
 			} else {
 				// This 'end' closes a block
 				blockDepth--
-				fmt.Printf("DEBUG: parseBlock found block end, blockDepth now %d\n", blockDepth)
 			}
 		}
 		
@@ -365,7 +493,6 @@ func (p *ParticleParser) parseBlock(tokens []lexer.Token, startIndex int) (*Bloc
 			i++
 		}
 	}
-	fmt.Printf("DEBUG: parseBlock found matching end at index %d, body range: %d to %d\n", i, bodyStart, i)
 	
 	if blockDepth > 0 {
 		return nil, startIndex, &BoxError{
@@ -424,25 +551,16 @@ func (p *ParticleParser) parseBodyTokens(tokens []lexer.Token) []interface{} {
 	var result []interface{}
 	i := 0
 	
-	// DEBUG: Print token overview
-	fmt.Printf("DEBUG: parseBodyTokens called with %d tokens\n", len(tokens))
-	for idx, token := range tokens {
-		if token.Type != boxLexer.Symbols()["Whitespace"] && token.Type != boxLexer.Symbols()["Newline"] {
-			fmt.Printf("  [%d] %s: %s\n", idx, tokenTypeName(token.Type), token.Value)
-		}
-	}
+	// DEBUG: Print token overview (commented out)
+	// fmt.Printf("DEBUG: parseBodyTokens called with %d tokens\n", len(tokens))
 	
 	for i < len(tokens) {
 		if i >= len(tokens) {
 			break
 		}
 		
-		fmt.Printf("DEBUG: parseBodyTokens at index %d/%d, token: %s = %s\n", 
-			i, len(tokens), tokenTypeName(tokens[i].Type), tokens[i].Value)
-		
 		// Skip newlines
 		if tokens[i].Type == boxLexer.Symbols()["Newline"] {
-			fmt.Printf("DEBUG: Skipping newline at %d\n", i)
 			i++
 			continue
 		}
@@ -450,17 +568,13 @@ func (p *ParticleParser) parseBodyTokens(tokens []lexer.Token) []interface{} {
 		// Check for control structures
 		if tokens[i].Type == boxLexer.Symbols()["Word"] && 
 		   (tokens[i].Value == "while" || tokens[i].Value == "if" || tokens[i].Value == "for") {
-			fmt.Printf("DEBUG: Found control structure %s at index %d\n", tokens[i].Value, i)
 			// Parse control structure
 			controlBlock, newIndex := p.parseControlStructureTokens(tokens, i)
-			fmt.Printf("DEBUG: Control structure parsed, returned index %d (was %d)\n", newIndex, i)
 			result = append(result, *controlBlock)
 			i = newIndex
 		} else {
-			fmt.Printf("DEBUG: Parsing regular command at index %d\n", i)
 			// Parse regular command
 			cmd, newIndex := p.parseCommandFromTokens(tokens, i)
-			fmt.Printf("DEBUG: Regular command parsed, returned index %d (was %d)\n", newIndex, i)
 			if cmd != nil {
 				result = append(result, cmd)
 			}
@@ -468,7 +582,6 @@ func (p *ParticleParser) parseBodyTokens(tokens []lexer.Token) []interface{} {
 		}
 	}
 	
-	fmt.Printf("DEBUG: parseBodyTokens finished with %d results\n", len(result))
 	return result
 }
 
@@ -651,8 +764,6 @@ func (p *ParticleParser) parseCommandFromTokens(tokens []lexer.Token, startIndex
 func (p *ParticleParser) parseControlStructureTokens(tokens []lexer.Token, startIndex int) (*Block, int) {
 	startToken := tokens[startIndex]
 	
-	fmt.Printf("DEBUG: parseControlStructureTokens starting at index %d, token: %s\n", startIndex, startToken.Value)
-	
 	block := &Block{
 		Type:  CustomBlock,
 		Label: startToken.Value,
@@ -669,7 +780,6 @@ func (p *ParticleParser) parseControlStructureTokens(tokens []lexer.Token, start
 			expr := p.createExpr(tokens[i])
 			if expr != nil {
 				block.Args = append(block.Args, expr.String())
-				fmt.Printf("DEBUG: Added arg: %s\n", expr.String())
 			}
 		}
 		i++
@@ -677,26 +787,21 @@ func (p *ParticleParser) parseControlStructureTokens(tokens []lexer.Token, start
 	
 	// Skip newline after control structure header
 	if i < len(tokens) && tokens[i].Type == boxLexer.Symbols()["Newline"] {
-		fmt.Printf("DEBUG: Skipping newline after control structure header at %d\n", i)
 		i++
 	}
 	
 	// Find matching end
 	depth := 1
 	bodyStart := i
-	fmt.Printf("DEBUG: Looking for matching end, bodyStart=%d, depth=%d\n", bodyStart, depth)
 	
 	for i < len(tokens) && depth > 0 {
 		token := tokens[i]
-		fmt.Printf("DEBUG: Depth tracking at %d: %s = %s, depth=%d\n", i, tokenTypeName(token.Type), token.Value, depth)
 		
 		if token.Type == boxLexer.Symbols()["Word"] && 
 		   (token.Value == "while" || token.Value == "if" || token.Value == "for") {
 			depth++
-			fmt.Printf("DEBUG: Found nested control structure, depth now %d\n", depth)
 		} else if token.Type == boxLexer.Symbols()["BlockEnd"] {
 			depth--
-			fmt.Printf("DEBUG: Found BlockEnd, depth now %d\n", depth)
 		}
 		
 		if depth > 0 {
@@ -704,22 +809,17 @@ func (p *ParticleParser) parseControlStructureTokens(tokens []lexer.Token, start
 		}
 	}
 	
-	fmt.Printf("DEBUG: Found matching end at index %d, bodyStart=%d to bodyEnd=%d\n", i, bodyStart, i)
-	
 	// Parse body
 	if i > bodyStart {
 		bodyTokens := tokens[bodyStart:i]
-		fmt.Printf("DEBUG: Parsing control structure body with %d tokens\n", len(bodyTokens))
 		block.Body = p.parseBodyTokens(bodyTokens)
 	}
 	
 	// Skip the 'end' token
 	if i < len(tokens) && tokens[i].Type == boxLexer.Symbols()["BlockEnd"] {
-		fmt.Printf("DEBUG: Skipping BlockEnd token at %d\n", i)
 		i++
 	}
 	
-	fmt.Printf("DEBUG: parseControlStructureTokens returning index %d\n", i)
 	return block, i
 }
 

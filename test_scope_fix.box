@@ -1,0 +1,12 @@
+[fn modify_var]
+  echo "In function, buf before: '${buf[*]}'"
+  set buf ${buf[*]} "added in function"
+  echo "In function, buf after: '${buf[*]}'"
+end
+
+[main]
+  set buf "initial"
+  echo "Main, buf before function: '${buf[*]}'"
+  modify_var
+  echo "Main, buf after function: '${buf[*]}'"
+end

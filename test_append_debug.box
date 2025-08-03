@@ -1,0 +1,21 @@
+[fn append]
+  echo "Entering append mode"
+  while true
+    prompt ""
+    set line $reply
+    echo "Got line: '$line'"
+    if match $line "."
+      echo "Found dot, returning"
+      return 0
+    end
+    echo "Adding line to buffer: '$line'"
+  end
+  echo "This should never print"
+end
+
+[main]
+  echo "Starting main"
+  append
+  echo "Back from append function"
+  echo "Program complete"
+end

@@ -1,0 +1,212 @@
+# Simple TUI Library for Box - No loops, hardcoded repeating characters
+# Simple terminal output utilities for CLI applications
+
+[data tui_colors]
+  reset "\033[0m"
+  bold "\033[1m"
+  dim "\033[2m"
+  underline "\033[4m"
+  
+  # Foreground colors
+  black "\033[30m"
+  red "\033[31m"
+  green "\033[32m"
+  yellow "\033[33m"
+  blue "\033[34m"
+  magenta "\033[35m"
+  cyan "\033[36m"
+  white "\033[37m"
+  
+  # Bright foreground colors
+  bright_black "\033[90m"
+  bright_red "\033[91m"
+  bright_green "\033[92m"
+  bright_yellow "\033[93m"
+  bright_blue "\033[94m"
+  bright_magenta "\033[95m"
+  bright_cyan "\033[96m"
+  bright_white "\033[97m"
+  
+  # Background colors
+  bg_black "\033[40m"
+  bg_red "\033[41m"
+  bg_green "\033[42m"
+  bg_yellow "\033[43m"
+  bg_blue "\033[44m"
+  bg_magenta "\033[45m"
+  bg_cyan "\033[46m"
+  bg_white "\033[47m"
+end
+
+# Color Functions
+[fn red text]
+  echo "${tui_colors.red}$text${tui_colors.reset}"
+end
+
+[fn green text]
+  echo "${tui_colors.green}$text${tui_colors.reset}"
+end
+
+[fn yellow text]
+  echo "${tui_colors.yellow}$text${tui_colors.reset}"
+end
+
+[fn blue text]
+  echo "${tui_colors.blue}$text${tui_colors.reset}"
+end
+
+[fn cyan text]
+  echo "${tui_colors.cyan}$text${tui_colors.reset}"
+end
+
+[fn magenta text]
+  echo "${tui_colors.magenta}$text${tui_colors.reset}"
+end
+
+[fn bold text]
+  echo "${tui_colors.bold}$text${tui_colors.reset}"
+end
+
+[fn dim text]
+  echo "${tui_colors.dim}$text${tui_colors.reset}"
+end
+
+[fn underline text]
+  echo "${tui_colors.underline}$text${tui_colors.reset}"
+end
+
+# Status Functions
+[fn success message]
+  echo "${tui_colors.green}✓ $message${tui_colors.reset}"
+end
+
+[fn error message]
+  echo "${tui_colors.red}✗ $message${tui_colors.reset}"
+end
+
+[fn warning message]
+  echo "${tui_colors.yellow}⚠ $message${tui_colors.reset}"
+end
+
+[fn info message]
+  echo "${tui_colors.blue}ℹ $message${tui_colors.reset}"
+end
+
+[fn loading message]
+  echo "${tui_colors.cyan}⟳ $message...${tui_colors.reset}"
+end
+
+# Layout Functions with hardcoded patterns
+[fn banner text]
+  echo ""
+  echo "${tui_colors.bold}================================================================================${tui_colors.reset}"
+  echo "${tui_colors.bold}  $text${tui_colors.reset}"
+  echo "${tui_colors.bold}================================================================================${tui_colors.reset}"
+  echo ""
+end
+
+[fn section title]
+  echo ""
+  echo "${tui_colors.bold}━━ $title ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${tui_colors.reset}"
+  echo ""
+end
+
+[fn header text]
+  echo ""
+  echo "${tui_colors.cyan}┌────────────────────────────────────────────────────────────────────────────┐${tui_colors.reset}"
+  echo "${tui_colors.cyan}│ $text                                                                       │${tui_colors.reset}"
+  echo "${tui_colors.cyan}└────────────────────────────────────────────────────────────────────────────┘${tui_colors.reset}"
+  echo ""
+end
+
+[fn box text]
+  echo "┌──────────────────────────────────────┐"
+  echo "│ $text                              │"
+  echo "└──────────────────────────────────────┘"
+end
+
+[fn separator]
+  echo "────────────────────────────────────────────────────────────────────────────────"
+end
+
+# Progress Functions - simplified
+[fn progress label current total]
+  echo "$label: [$current/$total] - ${current}% complete"
+end
+
+# List Functions
+[fn list_item text]
+  echo "• $text"
+end
+
+[fn numbered_item number text]
+  echo "$number. $text"
+end
+
+[fn indent level text]
+  if test $level -eq 1
+    echo "  $text"
+  elif test $level -eq 2
+    echo "    $text"
+  elif test $level -eq 3
+    echo "      $text"
+  else
+    echo "$text"
+  end
+end
+
+# Animation Functions - simplified
+[fn animate_spinner message]
+  echo "${tui_colors.cyan}⠋${tui_colors.reset} $message"
+  sleep 0.1
+  echo -n "\r${tui_colors.cyan}⠙${tui_colors.reset} $message"
+  sleep 0.1
+  echo -n "\r${tui_colors.cyan}⠹${tui_colors.reset} $message"
+  sleep 0.1
+  echo -n "\r${tui_colors.cyan}⠸${tui_colors.reset} $message"
+  sleep 0.1
+  echo -n "\r${tui_colors.cyan}⠼${tui_colors.reset} $message"
+  sleep 0.1
+  echo "\r${tui_colors.green}✓${tui_colors.reset} $message - Done!"
+end
+
+[fn dots message count]
+  echo -n "$message"
+  if test $count -gt 0
+    echo -n "."
+    sleep 0.3
+  end
+  if test $count -gt 1
+    echo -n "."
+    sleep 0.3
+  end
+  if test $count -gt 2
+    echo -n "."
+    sleep 0.3
+  end
+  if test $count -gt 3
+    echo -n "."
+    sleep 0.3
+  end
+  if test $count -gt 4
+    echo -n "."
+    sleep 0.3
+  end
+  echo ""
+end
+
+# Utility Functions
+[fn ask question]
+  echo -n "$question (y/n): "
+  prompt ""
+  if match $reply "y" || match $reply "Y" || match $reply "yes" || match $reply "Yes"
+    return 0
+  else
+    return 1
+  end
+end
+
+[fn pause message="Press Enter to continue..."]
+  echo -n "$message"
+  prompt ""
+end

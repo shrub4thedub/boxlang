@@ -1,22 +1,26 @@
-
-
 [fn writebuf file]
   join "\n" ${buf[*]} | run tee $file
 end
 
-[fn readbuf file]
-  if exists $file
-    set buf $(cat $file)
-    len ${buf[*]}
-    set curr $_len_result
-  end
-  if not exists $file
-    set buf
-    set curr 0
+[fn append]
+  while true
+    prompt ""
+    set line $reply
+    if match $line "."
+      return 0
+    end
+    set buf ${buf[*]} $line
+    arith $curr + 1
+    set curr $_arith_result
   end
 end
 
-[fn collect_lines]
+[fn insert]
+  # insert before current line
+  if arith $curr "<" 1
+    set curr 1
+  end
+
   set lines
   while true
     prompt ""
@@ -26,19 +30,12 @@ end
     end
     set lines ${lines[*]} $line
   end
-end
-
-[fn insert]
-  collect_lines
   if not ${lines[0]}
     return 0
   end
 
   arith $curr - 1
   set pos $_arith_result
-  if test $curr -eq 0
-    set pos 0
-  end
 
   len ${buf[*]}
   set total $_len_result
@@ -64,19 +61,14 @@ end
   set curr $_arith_result
 end
 
-[fn append]
-  arith $curr + 1
-  set curr $_arith_result
-  insert
-end
-
 [fn delete]
-  if test $curr -eq 0
+  if arith $curr "<=" 0
     return 0
   end
 
   arith $curr - 1
   set pos $_arith_result
+
   len ${buf[*]}
   set total $_len_result
 
@@ -103,7 +95,7 @@ end
 end
 
 [fn change]
-  if test $curr -eq 0
+  if arith $curr "<=" 0
     return 0
   end
   set pos $curr
@@ -114,19 +106,20 @@ end
 end
 
 [main]
-  # ed implementation in Box
-  # run with: ./box examples/ed.box [file]
   set file $1
   set buf
   set curr 0
   set reply ""
 
-  readbuf $file
+  if exists $file
+    set buf $(cat $file)
+    len ${buf[*]}
+    set curr $_len_result
+  end
 
   while true
     prompt ":"
     if match $status "1"
-      # EOF reached, exit
       break
     end
     set cmd $reply
@@ -156,7 +149,7 @@ end
     end
 
     if match $cmd "n"
-      if test $curr -gt 0
+      if arith $curr ">" 0
         arith $curr - 1
         set idx $_arith_result
         echo "$curr\t${buf[$idx]}"
@@ -165,7 +158,7 @@ end
     end
 
     if match $cmd "p"
-      if test $curr -gt 0
+      if arith $curr ">" 0
         arith $curr - 1
         set idx $_arith_result
         echo ${buf[$idx]}
@@ -181,7 +174,7 @@ end
     if match $cmd "$"
       len ${buf[*]}
       set curr $_len_result
-      if test $curr -gt 0
+      if arith $curr ">" 0
         arith $curr - 1
         set idx $_arith_result
         echo ${buf[$idx]}
@@ -191,11 +184,6 @@ end
 
     if match $cmd "w"
       writebuf $file
-      continue
-    end
-
-    if match $cmd "r"
-      readbuf $file
       continue
     end
 

@@ -1,2 +1,7 @@
-prompt ":"
-echo "You entered: $reply"
+[main]
+  echo "Testing prompt functionality"
+  prompt "Enter something: "
+  echo "You entered: '$reply'"
+  prompt "Enter again: "
+  echo "You entered: '$reply'"
+end

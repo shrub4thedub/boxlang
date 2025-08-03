@@ -116,19 +116,38 @@ end`,
 			Stdout: `Hash length check
 Hash result length: 1`,
 		},
-		{
-			Name: "environment variables",
-			Script: `[main]
+                {
+                        Name: "environment variables",
+                        Script: `[main]
 env "TEST_VAR" "test_value"
 env "TEST_VAR"
 echo "Env var: $_env_result"
 end`,
-			ExitCode: 0,
-			Stdout:   "Env var: test_value",
-		},
-		{
-			Name: "run exit code propagation",
-			Script: `[main]
+                        ExitCode: 0,
+                        Stdout:   "Env var: test_value",
+                },
+                {
+                        Name: "match item with patterns",
+                        Script: `[main]
+match "hello.go" "*.go" "*.c"
+echo "status=${status[0]}"
+end`,
+                        ExitCode: 0,
+                        Stdout:   "status=0",
+                },
+                {
+                        Name: "prompt captures reply",
+                        Script: `[main]
+prompt "Name: "
+echo "reply:$reply"
+end`,
+                        Stdin:    "Alice\n",
+                        ExitCode: 0,
+                        Stdout:   "Name: reply:Alice",
+                },
+                {
+                        Name: "run exit code propagation",
+                        Script: `[main]
 run false
 end`,
 			ExitCode: 1,

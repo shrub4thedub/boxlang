@@ -3,6 +3,7 @@ package box
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -100,21 +101,21 @@ func (e *Evaluator) Eval(program *Program, args []string) Result {
 	for i, arg := range args {
 		e.scope.Set(strconv.Itoa(i+1), Value{arg})
 	}
-	
+
 	// Initialize status variable
 	e.scope.Set("status", Value{"0"})
-	
+
 	// Populate namespaces from imports
 	for namespace, blocks := range program.Namespaces {
 		e.scope.Namespaces[namespace] = blocks
 	}
-	
+
 	// Load imported data blocks into namespaced scope
 	for _, imp := range program.Imports {
 		// Create evaluator for imported program to load its data
 		importScope := NewScope()
 		importEvaluator := NewEvaluator(importScope)
-		
+
 		// Load data blocks from imported program
 		for i, block := range imp.Program.Blocks {
 			if block.Type == DataBlock {
@@ -124,14 +125,14 @@ func (e *Evaluator) Eval(program *Program, args []string) Result {
 				}
 			}
 		}
-		
+
 		// Copy loaded data to main scope with namespace prefix
 		for blockName, dataMap := range importScope.Data {
 			namespacedName := imp.Namespace + "." + blockName
 			e.scope.Data[namespacedName] = dataMap
 		}
 	}
-	
+
 	// First pass: collect functions and data blocks
 	for i, block := range program.Blocks {
 		if block.Type == FnBlock {
@@ -143,7 +144,7 @@ func (e *Evaluator) Eval(program *Program, args []string) Result {
 			}
 		}
 	}
-	
+
 	// Check for CLI dispatch to -i functions
 	if len(args) > 0 {
 		if fn, exists := program.Functions[args[0]]; exists {
@@ -154,7 +155,7 @@ func (e *Evaluator) Eval(program *Program, args []string) Result {
 			}
 		}
 	}
-	
+
 	// Execute main block if it exists
 	if program.Main != nil {
 		result := e.evalBlock(program.Main)
@@ -162,7 +163,7 @@ func (e *Evaluator) Eval(program *Program, args []string) Result {
 			return result
 		}
 	}
-	
+
 	return Result{Status: 0}
 }
 
@@ -170,7 +171,7 @@ func (e *Evaluator) loadDataBlock(block *Block) Result {
 	if e.scope.Data[block.Label] == nil {
 		e.scope.Data[block.Label] = make(map[string]Value)
 	}
-	
+
 	// Parse data block body into key-value pairs
 	for _, item := range block.Body {
 		if cmd, ok := item.(Cmd); ok {
@@ -189,7 +190,7 @@ func (e *Evaluator) loadDataBlock(block *Block) Result {
 			}
 		}
 	}
-	
+
 	return Result{Status: 0}
 }
 
@@ -221,7 +222,7 @@ func (e *Evaluator) evalBlock(block *Block) Result {
 			}
 		}
 	}
-	
+
 	return Result{Status: 0}
 }
 
@@ -244,28 +245,34 @@ func (e *Evaluator) evalIf(block *Block) Result {
 	if len(block.Args) == 0 {
 		return Result{Error: &BoxError{Message: "if: missing condition"}}
 	}
-	
+
 	// Create a simple condition command
 	conditionCmd := &Cmd{
 		Verb:        block.Args[0],
 		Args:        []Expr{},
 		ErrorPolicy: FailFast,
 	}
-	
+
 	// Add remaining args as arguments to the condition
 	for i := 1; i < len(block.Args); i++ {
-		conditionCmd.Args = append(conditionCmd.Args, &LiteralExpr{Value: block.Args[i]})
+		arg := block.Args[i]
+		if strings.HasPrefix(arg, "$") {
+			name := strings.TrimPrefix(arg, "$")
+			conditionCmd.Args = append(conditionCmd.Args, &VariableExpr{Name: name})
+		} else {
+			conditionCmd.Args = append(conditionCmd.Args, &LiteralExpr{Value: arg})
+		}
 	}
-	
+
 	condResult := e.evalCommand(conditionCmd)
-	
+
 	// If condition succeeds (status 0), execute if body
 	if condResult.Status == 0 {
 		for _, item := range block.Body {
 			if nestedBlock, ok := item.(Block); ok && nestedBlock.Label == "else" {
 				break // Skip else block
 			}
-			
+
 			switch v := item.(type) {
 			case Cmd:
 				result := e.evalCommand(&v)
@@ -294,7 +301,7 @@ func (e *Evaluator) evalIf(block *Block) Result {
 			}
 		}
 	}
-	
+
 	return Result{Status: 0}
 }
 
@@ -304,22 +311,13 @@ func (e *Evaluator) evalFor(block *Block) Result {
 	if len(block.Args) < 3 || block.Args[1] != "in" {
 		return Result{Error: &BoxError{Message: "for: invalid syntax, expected 'for var in list'"}}
 	}
-	
+
 	varName := block.Args[0]
-	listExpr := block.Args[2] // Simplified - should parse as expression
-	
-	// For now, treat as glob or simple list
-	var items []string
-	if listExpr == "glob" && len(block.Args) > 3 {
-		// TODO: implement glob expansion
-		items = block.Args[3:] // Use remaining args as items
-	} else {
-		items = []string{listExpr}
-	}
-	
+	items := block.Args[2:]
+
 	for _, item := range items {
 		e.scope.Set(varName, Value{item})
-		
+
 		for _, bodyItem := range block.Body {
 			switch v := bodyItem.(type) {
 			case Cmd:
@@ -340,7 +338,7 @@ func (e *Evaluator) evalFor(block *Block) Result {
 			}
 		}
 	}
-	
+
 	return Result{Status: 0}
 }
 
@@ -350,22 +348,22 @@ func (e *Evaluator) evalWhile(block *Block) Result {
 		if len(block.Args) == 0 {
 			break
 		}
-		
+
 		conditionCmd := &Cmd{
 			Verb:        block.Args[0],
 			Args:        []Expr{},
 			ErrorPolicy: FailFast,
 		}
-		
+
 		for i := 1; i < len(block.Args); i++ {
 			conditionCmd.Args = append(conditionCmd.Args, &LiteralExpr{Value: block.Args[i]})
 		}
-		
+
 		condResult := e.evalCommand(conditionCmd)
 		if condResult.Status != 0 {
 			break
 		}
-		
+
 		// Execute body
 		for _, bodyItem := range block.Body {
 			switch v := bodyItem.(type) {
@@ -387,7 +385,7 @@ func (e *Evaluator) evalWhile(block *Block) Result {
 			}
 		}
 	}
-	
+
 	return Result{Status: 0}
 }
 
@@ -399,11 +397,11 @@ func (e *Evaluator) callFunction(fn *Block, args []string) Result {
 	for name, dataMap := range rootScope.Data {
 		childScope.Data[name] = dataMap
 	}
-	
+
 	oldScope := e.scope
 	e.scope = childScope
 	defer func() { e.scope = oldScope }()
-	
+
 	// Set function arguments
 	for i, argName := range fn.Args {
 		if strings.Contains(argName, "=") {
@@ -411,7 +409,7 @@ func (e *Evaluator) callFunction(fn *Block, args []string) Result {
 			parts := strings.SplitN(argName, "=", 2)
 			name := parts[0]
 			defaultVal := parts[1]
-			
+
 			if i < len(args) {
 				e.scope.Set(name, Value{args[i]})
 			} else {
@@ -424,19 +422,22 @@ func (e *Evaluator) callFunction(fn *Block, args []string) Result {
 			}
 		}
 	}
-	
+
 	// Set remaining args as numbered parameters
 	for i := len(fn.Args); i < len(args); i++ {
 		e.scope.Set(strconv.Itoa(i+1), Value{args[i]})
 	}
-	
+
 	result := e.evalBlock(fn)
-	
+
 	// Propagate status back to parent
 	if oldScope != nil {
 		oldScope.Set("status", e.scope.Variables["status"])
 	}
-	
+
+	// Returning from a function should not halt the caller
+	result.Halt = false
+
 	return result
 }
 
@@ -452,9 +453,9 @@ func (e *Evaluator) evalCommand(cmd *Cmd) Result {
 		}
 		args = append(args, val)
 	}
-	
+
 	var result Result
-	
+
 	// Check for function call first - look in root scope only to avoid recursion
 	if fn, exists := e.getRootScope().Functions[cmd.Verb]; exists {
 		var strArgs []string
@@ -468,7 +469,7 @@ func (e *Evaluator) evalCommand(cmd *Cmd) Result {
 		if len(parts) == 2 {
 			namespace := parts[0]
 			functionName := parts[1]
-			
+
 			if namespaceBlocks, exists := e.getRootScope().Namespaces[namespace]; exists {
 				if fn, exists := namespaceBlocks[functionName]; exists {
 					var strArgs []string
@@ -500,10 +501,15 @@ func (e *Evaluator) evalCommand(cmd *Cmd) Result {
 			Help: fmt.Sprintf("'%s' is not a built-in verb. Box only supports internal commands.", cmd.Verb),
 		}}
 	}
-	
+
 	// Update status after command execution
 	e.updateStatus(result)
-	
+
+	// Spawn returns a PID; treat as success for control flow
+	if cmd.Verb == "spawn" && result.Error == nil {
+		result.Status = 0
+	}
+
 	// Handle error policies based on non-zero status or explicit error
 	if result.Error != nil || result.Status != 0 {
 		if cmd.ErrorPolicy == IgnoreError {
@@ -515,17 +521,16 @@ func (e *Evaluator) evalCommand(cmd *Cmd) Result {
 			// Return successful result to continue execution
 			return Result{Status: 0}
 		} else if cmd.ErrorPolicy == TryFallbackHalt && cmd.Fallback != nil {
-			// Execute fallback and then halt
-			fallbackResult := e.evalCommand(cmd.Fallback)
-			// Always halt after fallback, regardless of fallback's success
-			return Result{Status: fallbackResult.Status, Halt: true}
+			// Execute fallback and then halt, preserving original status
+			e.evalCommand(cmd.Fallback)
+			return Result{Status: result.Status, Halt: true}
 		} else if cmd.ErrorPolicy == FailFast {
 			// Fail-fast: non-zero exit aborts current scope
 			result.Halt = true
 			return result
 		}
 	}
-	
+
 	return result
 }
 
@@ -541,18 +546,17 @@ func (e *Evaluator) getRootScope() *Scope {
 	return scope
 }
 
-
 func (e *Evaluator) expandVariables(text string) string {
 	// Handle command substitution $(...) patterns first
 	result := text
-	
+
 	// Handle $(...) patterns
 	for {
 		start := strings.Index(result, "$(")
 		if start == -1 {
 			break
 		}
-		
+
 		// Find matching closing parenthesis
 		depth := 1
 		end := start + 2
@@ -566,39 +570,39 @@ func (e *Evaluator) expandVariables(text string) string {
 				end++
 			}
 		}
-		
+
 		if depth == 0 {
 			commandStr := result[start+2 : end]
-			
+
 			// Execute command substitution
 			value, err := e.executeCommandSubstitution(commandStr)
 			var replacement string
 			if err == nil {
 				replacement = value.String()
 			}
-			
+
 			result = result[:start] + replacement + result[end+1:]
 		} else {
 			break // Unmatched parentheses
 		}
 	}
-	
+
 	// Handle ${...} patterns
 	for {
 		start := strings.Index(result, "${")
 		if start == -1 {
 			break
 		}
-		
+
 		end := strings.Index(result[start:], "}")
 		if end == -1 {
 			break
 		}
 		end += start
-		
+
 		varPath := result[start+2 : end]
 		var replacement string
-		
+
 		if strings.Contains(varPath, ".") {
 			// Header lookup like ${config.name} or namespaced ${namespace.block.field}
 			parts := strings.Split(varPath, ".")
@@ -607,7 +611,7 @@ func (e *Evaluator) expandVariables(text string) string {
 					// Simple case: ${block.field}
 					blockName := parts[0]
 					fieldName := parts[1]
-					
+
 					scope := e.scope
 					for scope != nil {
 						if block, ok := scope.Data[blockName]; ok {
@@ -623,7 +627,7 @@ func (e *Evaluator) expandVariables(text string) string {
 					namespace := parts[0]
 					blockName := parts[1]
 					fieldName := parts[2]
-					
+
 					// Look for namespaced data block
 					namespacedBlockName := namespace + "." + blockName
 					scope := e.scope
@@ -646,8 +650,8 @@ func (e *Evaluator) expandVariables(text string) string {
 				bracketEnd := strings.Index(varPath, "]")
 				if bracketStart < bracketEnd {
 					varName := varPath[:bracketStart]
-					indexStr := varPath[bracketStart+1:bracketEnd]
-					
+					indexStr := varPath[bracketStart+1 : bracketEnd]
+
 					if val, ok := e.scope.Get(varName); ok {
 						if indexStr == "*" {
 							// Return all elements joined with spaces
@@ -667,43 +671,42 @@ func (e *Evaluator) expandVariables(text string) string {
 				}
 			}
 		}
-		
+
 		result = result[:start] + replacement + result[end+1:]
 	}
-	
+
 	// Handle $var patterns (simpler case)
 	for {
 		start := strings.Index(result, "$")
 		if start == -1 {
 			break
 		}
-		
+
 		// Find end of variable name
 		end := start + 1
-		for end < len(result) && (result[end] >= 'a' && result[end] <= 'z' || 
-			result[end] >= 'A' && result[end] <= 'Z' || 
-			result[end] >= '0' && result[end] <= '9' || 
+		for end < len(result) && (result[end] >= 'a' && result[end] <= 'z' ||
+			result[end] >= 'A' && result[end] <= 'Z' ||
+			result[end] >= '0' && result[end] <= '9' ||
 			result[end] == '_') {
 			end++
 		}
-		
-		if end > start + 1 {
-			varName := result[start+1:end]
+
+		if end > start+1 {
+			varName := result[start+1 : end]
 			var replacement string
-			
+
 			if val, ok := e.scope.Get(varName); ok {
 				replacement = val.String()
 			}
-			
+
 			result = result[:start] + replacement + result[end:]
 		} else {
 			break
 		}
 	}
-	
+
 	return result
 }
-
 
 func (e *Evaluator) evalExpression(expr Expr) (Value, error) {
 	switch v := expr.(type) {
@@ -711,7 +714,7 @@ func (e *Evaluator) evalExpression(expr Expr) (Value, error) {
 		// Check if this literal contains variable expansions
 		expanded := e.expandVariables(v.Value)
 		return Value{expanded}, nil
-		
+
 	case *VariableExpr:
 		val, ok := e.scope.Get(v.Name)
 		if !ok {
@@ -724,7 +727,7 @@ func (e *Evaluator) evalExpression(expr Expr) (Value, error) {
 				Help: fmt.Sprintf("Variable '$%s' is not defined. Check spelling or use 'set %s value' to define it.", v.Name, v.Name),
 			}
 		}
-		
+
 		if v.Index != nil {
 			if *v.Index == "*" {
 				return val, nil
@@ -740,13 +743,13 @@ func (e *Evaluator) evalExpression(expr Expr) (Value, error) {
 			}
 			return Value{val[idx]}, nil
 		}
-		
+
 		// Return first element for $var
 		if len(val) > 0 {
 			return Value{val[0]}, nil
 		}
 		return Value{}, nil
-		
+
 	case *HeaderLookupExpr:
 		parts := strings.Split(v.Path, ".")
 		if len(parts) < 2 {
@@ -754,10 +757,10 @@ func (e *Evaluator) evalExpression(expr Expr) (Value, error) {
 				Message: fmt.Sprintf("invalid header lookup: %s", v.Path),
 			}
 		}
-		
+
 		blockName := parts[0]
 		fieldName := parts[1]
-		
+
 		// Look in current scope and parent scopes
 		scope := e.scope
 		for scope != nil {
@@ -768,11 +771,11 @@ func (e *Evaluator) evalExpression(expr Expr) (Value, error) {
 			}
 			scope = scope.Parent
 		}
-		
+
 		return Value{}, &BoxError{
 			Message: fmt.Sprintf("undefined header field: %s", v.Path),
 		}
-		
+
 	case *CommandSubExpr:
 		// Execute the command and capture its output
 		result, err := e.executeCommandSubstitution(v.Command)
@@ -780,7 +783,7 @@ func (e *Evaluator) evalExpression(expr Expr) (Value, error) {
 			return Value{}, err
 		}
 		return result, nil
-		
+
 	default:
 		return Value{}, &BoxError{
 			Message: fmt.Sprintf("unknown expression type: %T", expr),
@@ -793,27 +796,27 @@ func (e *Evaluator) executeCommandSubstitution(commandStr string) (Value, error)
 	// Parse the command string as a mini Box program
 	lexer := NewLexer(commandStr, "command-substitution")
 	parser := NewParser(lexer)
-	
+
 	program, err := parser.Parse()
 	if err != nil {
 		return Value{}, &BoxError{
 			Message: fmt.Sprintf("command substitution parse error: %v", err),
 		}
 	}
-	
+
 	// Execute the program and capture its output
 	if program.Main == nil || len(program.Main.Body) == 0 {
 		return Value{""}, nil
 	}
-	
+
 	// Create a child scope for the command substitution
 	childScope := e.scope.Child()
-	
+
 	// Copy parent variables to child scope
 	for name, value := range e.scope.Variables {
 		childScope.Variables[name] = value
 	}
-	
+
 	// Copy parent data to child scope
 	rootScope := e.getRootScope()
 	for name, dataMap := range rootScope.Data {
@@ -825,49 +828,49 @@ func (e *Evaluator) executeCommandSubstitution(commandStr string) (Value, error)
 	for name, blocks := range rootScope.Namespaces {
 		childScope.Namespaces[name] = blocks
 	}
-	
+
 	childEvaluator := NewEvaluator(childScope)
-	
-	// Capture stdout using a simpler approach
+
+	// Capture stdout while still forwarding it
 	originalStdout := os.Stdout
-	
-	// Create a temporary buffer to capture output
+
 	r, w, err := os.Pipe()
 	if err != nil {
 		return Value{}, &BoxError{
 			Message: fmt.Sprintf("command substitution pipe error: %v", err),
 		}
 	}
-	
+
 	os.Stdout = w
-	
+
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		io.Copy(io.MultiWriter(originalStdout, &buf), r)
+		close(done)
+	}()
+
 	// Execute the command
 	result := childEvaluator.evalBlock(program.Main)
-	
-	// Close write end to signal EOF
+
+	// Close write end and restore stdout
 	w.Close()
-	
-	// Restore original stdout
 	os.Stdout = originalStdout
-	
+	<-done
+	r.Close()
+
 	if result.Error != nil {
-		r.Close()
 		return Value{}, &BoxError{
 			Message: fmt.Sprintf("command substitution execution error: %v", result.Error),
 		}
 	}
-	
-	// Read all output
-	var output bytes.Buffer
-	output.ReadFrom(r)
-	r.Close()
-	
+
 	// Process output - split by lines and trim
-	outputStr := strings.TrimSpace(output.String())
+	outputStr := strings.TrimSpace(buf.String())
 	if outputStr == "" {
 		return Value{""}, nil
 	}
-	
+
 	lines := strings.Split(outputStr, "\n")
 	return Value(lines), nil
 }
@@ -877,18 +880,18 @@ func (e *Evaluator) evalPipeline(pipeline *Pipeline) Result {
 	if len(pipeline.Commands) == 0 {
 		return Result{Status: 0}
 	}
-	
+
 	if len(pipeline.Commands) == 1 {
 		// Single command - set status as single-element array
 		result := e.evalCommand(&pipeline.Commands[0])
 		e.scope.Set("status", Value{strconv.Itoa(result.Status)})
 		return result
 	}
-	
+
 	// Create pipes between commands
 	var pipes []*os.File
 	var readers []*os.File
-	
+
 	// Create n-1 pipes for n commands
 	for i := 0; i < len(pipeline.Commands)-1; i++ {
 		r, w, err := os.Pipe()
@@ -900,22 +903,22 @@ func (e *Evaluator) evalPipeline(pipeline *Pipeline) Result {
 		readers = append(readers, r)
 		pipes = append(pipes, w)
 	}
-	
+
 	// Save original stdin/stdout
 	originalStdin := os.Stdin
 	originalStdout := os.Stdout
-	
+
 	// Collect exit codes for each command in pipeline
 	var exitCodes []string
 	var lastResult Result
-	
+
 	// Execute commands in pipeline
 	for i, cmd := range pipeline.Commands {
 		// Set up stdin for this command
 		if i > 0 {
 			os.Stdin = readers[i-1]
 		}
-		
+
 		// Set up stdout for this command
 		if i < len(pipeline.Commands)-1 {
 			os.Stdout = pipes[i]
@@ -923,26 +926,26 @@ func (e *Evaluator) evalPipeline(pipeline *Pipeline) Result {
 			// Last command outputs to original stdout
 			os.Stdout = originalStdout
 		}
-		
+
 		// Execute the command
 		result := e.evalCommand(&cmd)
 		lastResult = result
-		
+
 		// Collect exit code (spec: "Each element is a decimal integer")
 		exitCodes = append(exitCodes, strconv.Itoa(result.Status))
-		
+
 		// Close the write end of the pipe for this command
 		if i < len(pipeline.Commands)-1 {
 			pipes[i].Close()
 		}
-		
+
 		// Continue pipeline execution even if commands fail (collect all exit codes)
 		// Only stop on critical errors
 		if result.Error != nil {
 			// Restore original stdin/stdout
 			os.Stdin = originalStdin
 			os.Stdout = originalStdout
-			
+
 			// Close remaining pipes
 			for j := i; j < len(pipes); j++ {
 				pipes[j].Close()
@@ -950,26 +953,26 @@ func (e *Evaluator) evalPipeline(pipeline *Pipeline) Result {
 			for j := i; j < len(readers); j++ {
 				readers[j].Close()
 			}
-			
+
 			// Set collected exit codes in $status before returning error
 			e.scope.Set("status", Value(exitCodes))
 			return result
 		}
 	}
-	
+
 	// Restore original stdin/stdout
 	os.Stdin = originalStdin
 	os.Stdout = originalStdout
-	
+
 	// Close all remaining readers
 	for _, r := range readers {
 		r.Close()
 	}
-	
+
 	// Set pipeline exit codes in $status array as per spec
 	// "$status = (exit1 exit2 exit3)"
 	e.scope.Set("status", Value(exitCodes))
-	
+
 	// Return the status of the last command in the pipeline
 	return lastResult
 }

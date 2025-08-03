@@ -6,7 +6,7 @@ BOX - shell.
 | Pillar                            | Concrete rule                                                                |
 | --------------------------------- | ---------------------------------------------------------------------------- |
 | Lists everywhere                  | Every variable is a **list of strings**; no implicit word-splitting.         |
-| One postcard of grammar           | Only 11 token kinds; every block ends with `end`.                            |
+| One postcard of grammar           | Only 13 token kinds; every block ends with `end`.                            |
 | Fail-fast by default              | Any non-zero exit aborts the current scope unless the command ends with `?`. |
 | Extensible by verbs, never syntax | New power arrives as **built-ins** written in C; the grammar never changes.  |
 
@@ -17,20 +17,20 @@ Think “Plan 9 rc with Make-like determinism and a ketogenic diet, written in g
 
 ## 1 Lexing & token rules
 
-| Token                    | Example                                      | Notes                                                        |                                                    |
-| ------------------------ | -------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------- |
-| **word**                 | `build.o`                                    | Bytes except unescaped whitespace or special chars below.    |                                                    |
-| **single-quote**         | `'raw bytes $no_expand'`                     | No interpolation at all.                                     |                                                    |
-| **double-quote**         | `"C-style escapes \n"`                       | `\`-escapes, but variable/command substitution still occurs. |                                                    |
-| **command substitution** | `` `uname -s` ``  `$(git rev-parse --short)` | Result is a **list** produced by the child command.          |                                                    |
-| **variable forms**       | `$x`  `${x[*]}`  `${x[2]}`                   | First element, whole list, indexed element (0-based).        |                                                    |
-| **header lookup**        | `${data.pkg.repo}`                           | Dot-path digs into `[data]` block.                           |                                                    |
-| **redirections**         | `>` `>>` `2>`                                | Same semantics as POSIX shells.                              |                                                    |
-| **pipeline**             | \`                                           | \`                                                           | Collects every child’s exit status into `$status`. |
-| **ignore-error flag**    | `?`                                          | Suppresses fail-fast for that command only.                  |                                                    |
-| **header start**         | `[fn build]`                                 | Also `[data pkg]`, `[main]`, etc.                            |                                                    |
-| **block terminator**     | `end`                                        | The one and only.                                            |                                                    |
-| **comment**              | `# every token after # is ignored to EOL`    | Whitespace not required before `#`.                          |                                                    |
+| Token                 | Example                          | Notes |
+| --------------------- | -------------------------------- | ----- |
+| **word**              | `build.o`                        | Bytes except unescaped whitespace or special characters. |
+| **single-quote**      | `'raw bytes $no_expand'`         | No interpolation at all. |
+| **double-quote**      | `"C-style escapes \n"`           | `\`-escapes, but variable/command substitution still occurs. |
+| **command substitution** | `` `uname -s` ``  `$(git rev-parse --short)` | Result is a **list** produced by the child command. |
+| **variable forms**    | `$x`  `${x[*]}`  `${x[2]}`       | First element, whole list, indexed element (0-based). |
+| **header lookup**     | `${data.pkg.repo}`               | Dot-path digs into `[data]` block. |
+| **redirections**      | `>` `>>` `2>`                    | Same semantics as POSIX shells. |
+| **pipeline**          | `|`                              | Collects every child’s exit status into `$status`. |
+| **ignore-error flag** | `?`                              | Suppresses fail-fast for that command only. |
+| **header start**      | `[fn build]`                     | Also `[data pkg]`, `[main]`, etc. |
+| **block terminator**  | `end`                            | The one and only. |
+| **comment**           | `# every token after # is ignored to EOL` | Whitespace not required before `#`. |
 
 > **No other punctuation is reserved.**
 > Semicolons, braces `{}`, background `&`, and here-docs intentionally do **not** exist.
@@ -226,32 +226,43 @@ Blocks always close with `end`.
 
 ## 6 Built-in verbs (core)
 
-> Alphabetical; verbs marked **🆕** were added in this revision.
+> Alphabetical list of built-in verbs.
 
-| Verb             | Signature (*italic* = optional) | Purpose / semantics                                                        |
-| ---------------- | ------------------------------- | -------------------------------------------------------------------------- |
-| **arith**        | `arith EXPR…`                   | Evaluate integer expression (supports `+ - * / % == != < > <= >=`).        |
-| **cd**           | `cd DIR`                        | Change directory (fail-fast).                                              |
-| **copy**         | `copy SRC… to DST/`             | Recursive copy; parents auto-created.                                      |
-| **delete**       | `delete PATH…`                  | Remove files/dirs recursively (like `rm -rf`).                             |
-| **echo**         | `echo ARG…`                     | Print list collapsed by spaces + newline.                                  |
-| **env**          | `env KEY [VALUE]`               | Read variable (1 arg) or set (2 args).                                     |
-| **exists**       | `exists PATH`                   | Exit 0 if path exists else 1.                                              |
-| **exit**         | `exit *STATUS*`                 | Terminate script immediately.                                              |
-| **glob**         | `glob PAT…`                     | Expand shell globs; returns list.                                          |
-| **hash**         | `hash alg file…`                | Print `<sum> file` lines (SHA-256 etc.).                                   |
-| **len**          | `len LIST`                      | Output list length.                                                        |
-| **link**         | `link SRC… to DST/`             | Hard-link files.                                                           |
-| **match** **🆕** | `match ITEM PAT…`               | Exit 0 if *ITEM* matches any shell-style *PAT*; else 1.<br>`match foo *.c` |
-| **mkdir**        | `mkdir DIR…`                    | `mkdir -p` behaviour; idempotent.                                          |
-| **move**         | `move SRC… to DST/`             | Rename/move; atomic on same file-system.                                   |
-| **prompt**       | `prompt MSG…`                   | Print message, read one line into `$reply`.                                |
-| **return**       | `return *STATUS*`               | Exit current function.                                                     |
-| **run**          | `run CMD ARG…`                  | Fork/exec external program, propagate status.                              |
-| **sleep**        | `sleep SECONDS`                 | Suspend (fractional allowed).                                              |
-| **spawn** **🆕** | `spawn CMD ARG…`                | Fork/exec **in background**, return child PID in `$status`.                |
-| **wait** **🆕**  | `wait PID`                      | Block until PID exits; put exit code in `$status`.                         |
-| **touch**        | `touch FILE…`                   | Create or update timestamp.                                                |
+| Verb         | Signature (*italic* = optional) | Purpose / semantics |
+| ------------ | ------------------------------- | ------------------- |
+| **arith**    | `arith EXPR…`                   | Evaluate integer expression (supports `+ - * / % == != < > <= >=`). |
+| **break**    | `break`                         | Leave nearest loop. |
+| **cat**      | `cat *FILE…*`                   | Output files or stdin to stdout. |
+| **cd**       | `cd DIR`                        | Change directory (fail-fast). |
+| **copy**     | `copy SRC DST`                  | Copy file; parents auto-created. |
+| **continue** | `continue`                      | Skip to next loop iteration. |
+| **delete**   | `delete PATH`                   | Remove files/dirs recursively (like `rm -rf`). |
+| **download** | `download URL DEST *HASH*`      | Fetch URL to DEST, optionally verify SHA-256 hash. |
+| **echo**     | `echo ARG…`                     | Print list collapsed by spaces + newline. |
+| **env**      | `env [KEY [VALUE]]`             | List, get, or set environment variables. |
+| **exists**   | `exists PATH`                   | Exit 0 if path exists else 1. |
+| **exit**     | `exit *STATUS*`                 | Terminate script immediately. |
+| **glob**     | `glob PATTERN`                  | Store matches in `_glob_result`. |
+| **hash**     | `hash ITEM`                     | SHA-256 digest stored in `_hash_result`. |
+| **join**     | `join SEP LIST…`                | Join lists; result in `_join_result`. |
+| **len**      | `len LIST`                      | Store length in `_len_result`. |
+| **link**     | `link TARGET LINK`              | Create symbolic link. |
+| **match**    | `match ITEM PAT…`               | Exit 0 if ITEM matches any pattern. |
+| **mkdir**    | `mkdir DIR`                     | `mkdir -p` behaviour; idempotent. |
+| **mktemp**   | `mktemp *PATTERN*`              | Create temp dir; path in `_mktemp_result`. |
+| **move**     | `move SRC DST`                  | Rename/move; atomic on same file-system. |
+| **prompt**   | `prompt *MSG*`                  | Print message, read one line into `$reply`. |
+| **return**   | `return *STATUS*`               | Exit current function. |
+| **run**      | `run CMD ARG…`                  | Fork/exec external program, propagate status. |
+| **set**      | `set VAR VALUE…`                | Assign list to variable. |
+| **sleep**    | `sleep SECONDS`                 | Suspend (fractional allowed). |
+| **spawn**    | `spawn CMD ARG…`                | Fork/exec in background, PID in `$status`. |
+| **tar**      | `tar SRC ARCHIVE`               | Create tar archive (gz/zst by suffix). |
+| **test**     | `test EXPR`                     | Exit 0 if EXPR is non-empty. |
+| **touch**    | `touch FILE`                    | Create or update timestamp. |
+| **untar**    | `untar ARCHIVE DEST`            | Extract tar archive (gz/zst supported). |
+| **wait**     | `wait PID`                      | Block until PID exits; exit code in `$status`. |
+| **write**    | `write FILE CONTENT`            | Write content to file. |
 
 All verbs are **pure C helpers**—no `system(3)` shell outs.
 
@@ -323,9 +334,10 @@ end
 
 ```box
 set nums  1 2 3 4 5
-echo len = $(len ${nums[*]})              # 5
-echo 3rd = ${nums[2]}                     # 3
-join , ${nums[*]} | echo csv = $status    # "1,2,3,4,5"
+len ${nums[*]}
+echo len = $_len_result              # 5
+echo 3rd = ${nums[2]}                # 3
+echo csv = $(join , ${nums[*]})      # "1,2,3,4,5"
 ```
 
 ---

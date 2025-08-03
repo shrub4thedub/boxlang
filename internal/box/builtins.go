@@ -217,22 +217,23 @@ func builtinGlob(args []Value, scope *Scope) Result {
 }
 
 func builtinMatch(args []Value, scope *Scope) Result {
-	if len(args) != 2 {
-		return Result{Error: &BoxError{Message: "match: requires exactly two arguments (pattern, string)"}}
-	}
+        if len(args) < 2 {
+                return Result{Error: &BoxError{Message: "match: requires at least two arguments (item, patterns...)"}}
+        }
 
-	pattern := args[0].String()
-	text := args[1].String()
+        text := args[0].String()
+        for _, pat := range args[1:] {
+                pattern := pat.String()
+                matched, err := filepath.Match(pattern, text)
+                if err != nil {
+                        return Result{Error: &BoxError{Message: fmt.Sprintf("match: %v", err)}}
+                }
+                if matched {
+                        return Result{Status: 0}
+                }
+        }
 
-	matched, err := filepath.Match(pattern, text)
-	if err != nil {
-		return Result{Error: &BoxError{Message: fmt.Sprintf("match: %v", err)}}
-	}
-
-	if matched {
-		return Result{Status: 0}
-	}
-	return Result{Status: 1}
+        return Result{Status: 1}
 }
 
 func builtinHash(args []Value, scope *Scope) Result {
@@ -312,13 +313,15 @@ func builtinPrompt(args []Value, scope *Scope) Result {
 		fmt.Print(args[0].String())
 	}
 
-	// Read input
-	scanner := bufio.NewScanner(os.Stdin)
-	if scanner.Scan() {
-		input := scanner.Text()
-		scope.Set("_prompt_result", Value{input})
-		return Result{Status: 0}
-	}
+        // Read input
+        scanner := bufio.NewScanner(os.Stdin)
+        if scanner.Scan() {
+                input := scanner.Text()
+                // Store result in both legacy and spec-compliant variables
+                scope.Set("_prompt_result", Value{input})
+                scope.Set("reply", Value{input})
+                return Result{Status: 0}
+        }
 
 	if err := scanner.Err(); err != nil {
 		return Result{Error: &BoxError{Message: fmt.Sprintf("prompt: %v", err)}}

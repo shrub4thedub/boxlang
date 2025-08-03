@@ -1,0 +1,61 @@
+
+
+[fn writebuf file]
+  join "\n" ${buf[*]} | run tee $file
+end
+
+[fn append]
+  while true
+    prompt ""
+    set line $reply
+    if match $line "."
+      return 0
+    end
+    set buf ${buf[*]} $line
+    arith $curr + 1
+    set curr $_arith_result
+  end
+end
+
+[main]
+  # Minimal ed implementation
+  set file $1
+  set buf
+  set curr 0
+
+  while true
+    prompt ":"
+    set cmd $reply
+
+    if match $cmd "q"
+      break
+    end
+
+    if match $cmd "a"
+      append
+      continue
+    end
+
+    if match $cmd "p"
+      if arith $curr ">" 0
+        arith $curr - 1
+        set idx $_arith_result
+        echo ${buf[$idx]}
+      end
+      continue
+    end
+
+    if match $cmd "w"
+      writebuf $file
+      continue
+    end
+
+    if match $cmd "[0-9]*"
+      arith $cmd
+      set curr $_arith_result
+      continue
+    end
+
+    echo "?"
+  end
+end

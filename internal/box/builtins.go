@@ -1,7 +1,9 @@
 package box
 
 import (
+	"archive/tar"
 	"bufio"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -16,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // BuiltinFunc represents a built-in verb function
@@ -38,6 +42,8 @@ var builtins = map[string]BuiltinFunc{
 	"touch":  builtinTouch,
 	"link":   builtinLink,
 	"exists": builtinExists,
+	"write":  builtinWrite,
+	"mktemp": builtinMktemp,
 
 	// Utility verbs
 	"len":   builtinLen,
@@ -65,6 +71,7 @@ var builtins = map[string]BuiltinFunc{
 	// Network verbs (spec-compliant pure implementations)
 	"download": builtinDownload,
 	"untar":    builtinUntar,
+	"tar":      builtinTar,
 
 	// Control flow helpers
 	"test":     builtinTest,
@@ -182,6 +189,21 @@ func builtinLink(args []Value, scope *Scope) Result {
 	return Result{Status: 0}
 }
 
+func builtinWrite(args []Value, scope *Scope) Result {
+	if len(args) != 2 {
+		return Result{Error: &BoxError{Message: "write: requires exactly two arguments (path, content)"}}
+	}
+
+	path := args[0].String()
+	content := args[1].String()
+
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		return Result{Error: &BoxError{Message: fmt.Sprintf("write: %v", err)}}
+	}
+
+	return Result{Status: 0}
+}
+
 // Utility verbs implementation
 
 func builtinLen(args []Value, scope *Scope) Result {
@@ -217,23 +239,23 @@ func builtinGlob(args []Value, scope *Scope) Result {
 }
 
 func builtinMatch(args []Value, scope *Scope) Result {
-        if len(args) < 2 {
-                return Result{Error: &BoxError{Message: "match: requires at least two arguments (item, patterns...)"}}
-        }
+	if len(args) < 2 {
+		return Result{Error: &BoxError{Message: "match: requires at least two arguments (item, patterns...)"}}
+	}
 
-        text := args[0].String()
-        for _, pat := range args[1:] {
-                pattern := pat.String()
-                matched, err := filepath.Match(pattern, text)
-                if err != nil {
-                        return Result{Error: &BoxError{Message: fmt.Sprintf("match: %v", err)}}
-                }
-                if matched {
-                        return Result{Status: 0}
-                }
-        }
+	text := args[0].String()
+	for _, pat := range args[1:] {
+		pattern := pat.String()
+		matched, err := filepath.Match(pattern, text)
+		if err != nil {
+			return Result{Error: &BoxError{Message: fmt.Sprintf("match: %v", err)}}
+		}
+		if matched {
+			return Result{Status: 0}
+		}
+	}
 
-        return Result{Status: 1}
+	return Result{Status: 1}
 }
 
 func builtinHash(args []Value, scope *Scope) Result {
@@ -241,9 +263,24 @@ func builtinHash(args []Value, scope *Scope) Result {
 		return Result{Error: &BoxError{Message: "hash: requires exactly one argument"}}
 	}
 
-	text := args[0].String()
-	hash := sha256.Sum256([]byte(text))
-	hashStr := hex.EncodeToString(hash[:])
+	target := args[0].String()
+	var hashStr string
+
+	if info, err := os.Stat(target); err == nil && !info.IsDir() {
+		file, err := os.Open(target)
+		if err != nil {
+			return Result{Error: &BoxError{Message: fmt.Sprintf("hash: %v", err)}}
+		}
+		defer file.Close()
+		hasher := sha256.New()
+		if _, err := io.Copy(hasher, file); err != nil {
+			return Result{Error: &BoxError{Message: fmt.Sprintf("hash: %v", err)}}
+		}
+		hashStr = hex.EncodeToString(hasher.Sum(nil))
+	} else {
+		sum := sha256.Sum256([]byte(target))
+		hashStr = hex.EncodeToString(sum[:])
+	}
 
 	// Set result in a variable accessible to caller
 	scope.Set("_hash_result", Value{hashStr})
@@ -313,15 +350,15 @@ func builtinPrompt(args []Value, scope *Scope) Result {
 		fmt.Print(args[0].String())
 	}
 
-        // Read input
-        scanner := bufio.NewScanner(os.Stdin)
-        if scanner.Scan() {
-                input := scanner.Text()
-                // Store result in both legacy and spec-compliant variables
-                scope.Set("_prompt_result", Value{input})
-                scope.Set("reply", Value{input})
-                return Result{Status: 0}
-        }
+	// Read input
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		input := scanner.Text()
+		// Store result in both legacy and spec-compliant variables
+		scope.Set("_prompt_result", Value{input})
+		scope.Set("reply", Value{input})
+		return Result{Status: 0}
+	}
 
 	if err := scanner.Err(); err != nil {
 		return Result{Error: &BoxError{Message: fmt.Sprintf("prompt: %v", err)}}
@@ -402,12 +439,161 @@ func builtinUntar(args []Value, scope *Scope) Result {
 		return Result{Error: &BoxError{Message: "untar: requires exactly two arguments (archive, destination)"}}
 	}
 
-	// For now, return an error indicating this needs external implementation
-	// A full tar implementation would be quite large for this context
-	return Result{Error: &BoxError{
-		Message: "untar: not implemented - would require full tar archive parsing",
-		Help:    "Use external tar command or implement with archive/tar package",
-	}}
+	archivePath := args[0].String()
+	dest := args[1].String()
+
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return Result{Error: &BoxError{Message: fmt.Sprintf("untar: %v", err)}}
+	}
+	defer file.Close()
+
+	var reader io.Reader = file
+	if strings.HasSuffix(archivePath, ".gz") || strings.HasSuffix(archivePath, ".tgz") {
+		gz, err := gzip.NewReader(file)
+		if err != nil {
+			return Result{Error: &BoxError{Message: fmt.Sprintf("untar: %v", err)}}
+		}
+		defer gz.Close()
+		reader = gz
+	} else if strings.HasSuffix(archivePath, ".zst") || strings.HasSuffix(archivePath, ".tzst") {
+		zr, err := zstd.NewReader(file)
+		if err != nil {
+			return Result{Error: &BoxError{Message: fmt.Sprintf("untar: %v", err)}}
+		}
+		defer zr.Close()
+		reader = zr
+	}
+
+	tr := tar.NewReader(reader)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return Result{Error: &BoxError{Message: fmt.Sprintf("untar: %v", err)}}
+		}
+
+		target := filepath.Join(dest, header.Name)
+		if !strings.HasPrefix(filepath.Clean(target), filepath.Clean(dest)+string(os.PathSeparator)) {
+			return Result{Error: &BoxError{Message: "untar: illegal file path"}}
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, os.FileMode(header.Mode)); err != nil {
+				return Result{Error: &BoxError{Message: fmt.Sprintf("untar: %v", err)}}
+			}
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return Result{Error: &BoxError{Message: fmt.Sprintf("untar: %v", err)}}
+			}
+			out, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.FileMode(header.Mode))
+			if err != nil {
+				return Result{Error: &BoxError{Message: fmt.Sprintf("untar: %v", err)}}
+			}
+			if _, err := io.Copy(out, tr); err != nil {
+				out.Close()
+				return Result{Error: &BoxError{Message: fmt.Sprintf("untar: %v", err)}}
+			}
+			out.Close()
+		case tar.TypeSymlink:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return Result{Error: &BoxError{Message: fmt.Sprintf("untar: %v", err)}}
+			}
+			if err := os.Symlink(header.Linkname, target); err != nil {
+				return Result{Error: &BoxError{Message: fmt.Sprintf("untar: %v", err)}}
+			}
+		default:
+			// Ignore other types
+		}
+	}
+
+	return Result{Status: 0}
+}
+
+func builtinTar(args []Value, scope *Scope) Result {
+	if len(args) != 2 {
+		return Result{Error: &BoxError{Message: "tar: requires exactly two arguments (source, archive)"}}
+	}
+
+	src := args[0].String()
+	dest := args[1].String()
+
+	outFile, err := os.Create(dest)
+	if err != nil {
+		return Result{Error: &BoxError{Message: fmt.Sprintf("tar: %v", err)}}
+	}
+	defer outFile.Close()
+
+	var writer io.WriteCloser = outFile
+	if strings.HasSuffix(dest, ".gz") || strings.HasSuffix(dest, ".tgz") {
+		gz := gzip.NewWriter(outFile)
+		writer = gz
+		defer gz.Close()
+	} else if strings.HasSuffix(dest, ".zst") || strings.HasSuffix(dest, ".tzst") {
+		zw, err := zstd.NewWriter(outFile)
+		if err != nil {
+			return Result{Error: &BoxError{Message: fmt.Sprintf("tar: %v", err)}}
+		}
+		writer = zw
+		defer zw.Close()
+	}
+
+	tw := tar.NewWriter(writer)
+	defer tw.Close()
+
+	err = filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+
+		var link string
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err = os.Readlink(path)
+			if err != nil {
+				return err
+			}
+		}
+
+		header, err := tar.FileInfoHeader(info, link)
+		if err != nil {
+			return err
+		}
+		header.Name = rel
+
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+
+		if info.Mode().IsRegular() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(tw, file); err != nil {
+				file.Close()
+				return err
+			}
+			file.Close()
+		}
+
+		return nil
+	})
+	if err != nil {
+		return Result{Error: &BoxError{Message: fmt.Sprintf("tar: %v", err)}}
+	}
+
+	return Result{Status: 0}
 }
 
 // Arithmetic verb implementation
@@ -601,6 +787,21 @@ func builtinExists(args []Value, scope *Scope) Result {
 	}
 
 	return Result{Status: 1}
+}
+
+func builtinMktemp(args []Value, scope *Scope) Result {
+	pattern := "box"
+	if len(args) == 1 {
+		pattern = args[0].String()
+	}
+
+	dir, err := os.MkdirTemp("", pattern)
+	if err != nil {
+		return Result{Error: &BoxError{Message: fmt.Sprintf("mktemp: %v", err)}}
+	}
+
+	scope.Set("_mktemp_result", Value{dir})
+	return Result{Status: 0}
 }
 
 func builtinTest(args []Value, scope *Scope) Result {

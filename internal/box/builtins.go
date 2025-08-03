@@ -680,12 +680,14 @@ func builtinJoin(args []Value, scope *Scope) Result {
 
 func builtinCat(args []Value, scope *Scope) Result {
 	if len(args) > 0 {
-		// If arguments provided, output them (like echo)
-		var parts []string
 		for _, arg := range args {
-			parts = append(parts, arg.String())
+			path := arg.String()
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return Result{Error: &BoxError{Message: fmt.Sprintf("cat: %v", err)}}
+			}
+			fmt.Print(string(data))
 		}
-		fmt.Print(strings.Join(parts, " "))
 	} else {
 		// No arguments, read from stdin and output to stdout
 		scanner := bufio.NewScanner(os.Stdin)

@@ -101,13 +101,13 @@ func (l *Lexer) advance() {
 	} else {
 		l.column++
 	}
-	
+
 	l.pos++
 	if l.pos >= len(l.input) {
 		l.current = 0
 		return
 	}
-	
+
 	l.current = rune(l.input[l.pos])
 }
 
@@ -126,7 +126,7 @@ func (l *Lexer) skipWhitespace() {
 
 func (l *Lexer) readWord() string {
 	start := l.pos
-	for l.current != 0 && !unicode.IsSpace(l.current) && 
+	for l.current != 0 && !unicode.IsSpace(l.current) &&
 		!strings.ContainsRune("|>?[]#'\"$`", l.current) {
 		l.advance()
 	}
@@ -135,8 +135,8 @@ func (l *Lexer) readWord() string {
 
 func (l *Lexer) readGlobPattern() string {
 	start := l.pos
-	for l.current != 0 && !unicode.IsSpace(l.current) && 
-		l.current != '|' && l.current != '>' && l.current != '?' && 
+	for l.current != 0 && !unicode.IsSpace(l.current) &&
+		l.current != '|' && l.current != '>' && l.current != '?' &&
 		l.current != ']' && l.current != '#' {
 		l.advance()
 	}
@@ -167,7 +167,7 @@ func (l *Lexer) readSingleQuote() string {
 func (l *Lexer) readDoubleQuote() string {
 	l.advance() // skip opening "
 	var result strings.Builder
-	
+
 	for l.current != '"' && l.current != 0 {
 		if l.current == '\\' {
 			l.advance()
@@ -190,7 +190,7 @@ func (l *Lexer) readDoubleQuote() string {
 		}
 		l.advance()
 	}
-	
+
 	if l.current == '"' {
 		l.advance() // skip closing "
 	}
@@ -277,10 +277,10 @@ func (l *Lexer) readComment() string {
 
 func (l *Lexer) NextToken() Token {
 	l.skipWhitespace()
-	
+
 	line := l.line
 	column := l.column
-	
+
 	switch l.current {
 	case 0:
 		return Token{EOF, "", line, column}
@@ -340,20 +340,15 @@ func (l *Lexer) NextToken() Token {
 		value := l.input[start:l.pos]
 		return Token{HEADER_START, value, line, column}
 	default:
-		if unicode.IsLetter(l.current) || l.current == '_' {
-			value := l.readWord()
-			if value == "end" {
-				return Token{BLOCK_END, value, line, column}
-			}
-			return Token{WORD, value, line, column}
-		} else if unicode.IsDigit(l.current) {
-			value := l.readWord()
-			return Token{WORD, value, line, column}
-		} else {
-			char := string(l.current)
-			l.advance()
-			return Token{WORD, char, line, column}
+		// Treat any sequence of non-special, non-whitespace characters as a word.
+		// This allows paths like /dev/null or names with punctuation to be lexed
+		// correctly as single tokens. Only reserved characters are handled by the
+		// earlier cases in this switch.
+		value := l.readWord()
+		if value == "end" {
+			return Token{BLOCK_END, value, line, column}
 		}
+		return Token{WORD, value, line, column}
 	}
 }
 

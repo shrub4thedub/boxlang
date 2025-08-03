@@ -627,8 +627,12 @@ func builtinRun(args []Value, scope *Scope) Result {
 	}
 
 	cmd := exec.Command(cmdName, cmdArgs...)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	// By default, forward stdout and stderr so external commands behave like
+	// normal shell utilities. This allows command substitution and pipelines
+	// to capture output by redirecting os.Stdout/os.Stderr before invoking
+	// builtinRun.
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
 	if err := cmd.Run(); err != nil {

@@ -1,8 +1,8 @@
 package integration
 
 import (
-	"testing"
 	"box/test"
+	"testing"
 )
 
 func TestPhase6BuiltinVerbs(t *testing.T) {
@@ -136,11 +136,11 @@ Processing complete`,
 echo "Error Recovery Chain Test"
 
 # Chain of fallbacks
-run ls "/bad/path1" ? run ls "/bad/path2" ? echo "All paths failed, using default"
+run ls "/bad/path1" > /dev/null 2> /dev/null ? run ls "/bad/path2" > /dev/null 2> /dev/null ? echo "All paths failed, using default"
 
 # Recovery with variables
 set backup_path "/tmp"
-run ls "/nonexistent" ? run ls $backup_path
+run ls "/nonexistent" > /dev/null 2> /dev/null ? run ls $backup_path > /dev/null 2> /dev/null
 echo "Recovery test complete: $status"
 end`,
 			ExitCode: 0,
@@ -173,8 +173,6 @@ apply_both 5
 end`,
 			ExitCode: 0,
 			Stdout: `Input: 5
-10
-15
 Doubled: 10
 Tripled: 15`,
 		},

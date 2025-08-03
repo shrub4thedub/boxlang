@@ -454,6 +454,44 @@ func (e *Evaluator) evalCommand(cmd *Cmd) Result {
 		args = append(args, val)
 	}
 
+	// Handle simple output redirections (>, >>, 2>)
+	origStdout := os.Stdout
+	origStderr := os.Stderr
+	var stdoutFile *os.File
+	var stderrFile *os.File
+
+	for _, r := range cmd.Redirects {
+		switch r.Type {
+		case ">":
+			f, err := os.OpenFile(r.Target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+			if err != nil {
+				res := Result{Error: &BoxError{Message: fmt.Sprintf("redirect: %v", err)}}
+				e.updateStatus(res)
+				return res
+			}
+			os.Stdout = f
+			stdoutFile = f
+		case ">>":
+			f, err := os.OpenFile(r.Target, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+			if err != nil {
+				res := Result{Error: &BoxError{Message: fmt.Sprintf("redirect: %v", err)}}
+				e.updateStatus(res)
+				return res
+			}
+			os.Stdout = f
+			stdoutFile = f
+		case "2>":
+			f, err := os.OpenFile(r.Target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+			if err != nil {
+				res := Result{Error: &BoxError{Message: fmt.Sprintf("redirect: %v", err)}}
+				e.updateStatus(res)
+				return res
+			}
+			os.Stderr = f
+			stderrFile = f
+		}
+	}
+
 	var result Result
 
 	// Check for function call first - look in root scope only to avoid recursion
@@ -500,6 +538,16 @@ func (e *Evaluator) evalCommand(cmd *Cmd) Result {
 			},
 			Help: fmt.Sprintf("'%s' is not a built-in verb. Box only supports internal commands.", cmd.Verb),
 		}}
+	}
+
+	// Restore stdout/stderr after command execution
+	if stdoutFile != nil {
+		stdoutFile.Close()
+		os.Stdout = origStdout
+	}
+	if stderrFile != nil {
+		stderrFile.Close()
+		os.Stderr = origStderr
 	}
 
 	// Update status after command execution
@@ -831,7 +879,7 @@ func (e *Evaluator) executeCommandSubstitution(commandStr string) (Value, error)
 
 	childEvaluator := NewEvaluator(childScope)
 
-	// Capture stdout while still forwarding it
+	// Capture stdout without forwarding to the parent
 	originalStdout := os.Stdout
 
 	r, w, err := os.Pipe()
@@ -846,7 +894,7 @@ func (e *Evaluator) executeCommandSubstitution(commandStr string) (Value, error)
 	var buf bytes.Buffer
 	done := make(chan struct{})
 	go func() {
-		io.Copy(io.MultiWriter(originalStdout, &buf), r)
+		io.Copy(&buf, r)
 		close(done)
 	}()
 

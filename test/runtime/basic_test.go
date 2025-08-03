@@ -1,8 +1,8 @@
 package runtime
 
 import (
-	"testing"
 	"box/test"
+	"testing"
 )
 
 func TestBasicCommands(t *testing.T) {
@@ -125,6 +125,25 @@ echo "Env var: $_env_result"
 end`,
 			ExitCode: 0,
 			Stdout:   "Env var: test_value",
+		},
+		{
+			Name: "run exit code propagation",
+			Script: `[main]
+run false
+end`,
+			ExitCode: 1,
+		},
+		{
+			Name: "spawn and wait",
+			Script: `[main]
+spawn false
+set pid $status
+wait $pid ?
+set code $status
+echo "exit code: $code"
+end`,
+			ExitCode: 0,
+			Stdout:   "exit code: 1",
 		},
 	}
 

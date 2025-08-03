@@ -37,35 +37,35 @@ func main() {
 
 	scriptPath := os.Args[1]
 	args := os.Args[2:]
-	
+
 	content, err := os.ReadFile(scriptPath)
 	if err != nil {
-		fmt.Printf("Error reading file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
 		os.Exit(1)
 	}
 
 	lexer := box.NewLexer(string(content), scriptPath)
 	parser := box.NewParser(lexer)
-	
+
 	program, err := parser.Parse()
 	if err != nil {
 		if boxErr, ok := err.(*box.BoxError); ok {
-			fmt.Print(box.FormatError(boxErr))
+			fmt.Fprint(os.Stderr, box.FormatError(boxErr))
 		} else {
-			fmt.Printf("Parse error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Parse error: %v\n", err)
 		}
 		os.Exit(1)
 	}
 
 	scope := box.NewScope()
 	evaluator := box.NewEvaluatorWithFilename(scope, scriptPath)
-	
+
 	result := evaluator.Eval(program, args)
 	if result.Error != nil {
 		if boxErr, ok := result.Error.(*box.BoxError); ok {
-			fmt.Print(box.FormatError(boxErr))
+			fmt.Fprint(os.Stderr, box.FormatError(boxErr))
 		} else {
-			fmt.Printf("Runtime error: %v\n", result.Error)
+			fmt.Fprintf(os.Stderr, "Runtime error: %v\n", result.Error)
 		}
 		os.Exit(1)
 	}
@@ -81,33 +81,33 @@ func lexDebug(filename string) {
 	}
 
 	lexer := box.NewLexer(string(content), filename)
-	
+
 	fmt.Printf("📄 Lexing: %s\n", filename)
 	fmt.Println("─────────────────────────────────────────────────────────────────")
 	fmt.Printf("%-4s %-3s %-15s %-20s %s\n", "Line", "Col", "Kind", "Value", "Raw")
 	fmt.Println("─────────────────────────────────────────────────────────────────")
-	
+
 	tokenCount := 0
 	for {
 		token := lexer.NextToken()
 		if token.Kind == box.EOF {
 			break
 		}
-		
+
 		// Skip comments for cleaner output unless they're interesting
 		if token.Kind == box.COMMENT {
 			continue
 		}
-		
+
 		tokenCount++
-		
+
 		// Format value for display
 		displayValue := token.Value
 		if len(displayValue) > 18 {
 			displayValue = displayValue[:15] + "..."
 		}
-		
-		// Show raw representation  
+
+		// Show raw representation
 		raw := token.Value
 		if token.Kind == box.SINGLE_QUOTE {
 			raw = "'" + token.Value + "'"
@@ -126,11 +126,11 @@ func lexDebug(filename string) {
 		} else if token.Kind == box.HEADER_START {
 			raw = token.Value
 		}
-		
-		fmt.Printf("%-4d %-3d %-15s %-20s %s\n", 
+
+		fmt.Printf("%-4d %-3d %-15s %-20s %s\n",
 			token.Line, token.Column, token.Kind.String(), displayValue, raw)
 	}
-	
+
 	fmt.Println("─────────────────────────────────────────────────────────────────")
 	fmt.Printf("✅ Lexed %d tokens successfully\n", tokenCount)
 }
@@ -144,7 +144,7 @@ func astDebug(filename string) {
 
 	lexer := box.NewLexer(string(content), filename)
 	parser := box.NewParser(lexer)
-	
+
 	program, err := parser.Parse()
 	if err != nil {
 		if boxErr, ok := err.(*box.BoxError); ok {
@@ -157,7 +157,7 @@ func astDebug(filename string) {
 
 	fmt.Printf("🌲 Abstract Syntax Tree: %s\n", filename)
 	fmt.Println("═════════════════════════════════════════════════════════════════")
-	
+
 	// Print program summary
 	fmt.Printf("📊 Program Summary:\n")
 	fmt.Printf("  Functions: %d\n", len(program.Functions))
@@ -244,13 +244,13 @@ func formatCommand(cmd *box.Cmd) string {
 	for _, arg := range cmd.Args {
 		result += " " + formatExpression(arg)
 	}
-	
+
 	if len(cmd.Redirects) > 0 {
 		for _, r := range cmd.Redirects {
 			result += " " + r.Type + " " + r.Target
 		}
 	}
-	
+
 	switch cmd.ErrorPolicy {
 	case box.IgnoreError:
 		result += " ?"
@@ -259,7 +259,7 @@ func formatCommand(cmd *box.Cmd) string {
 	case box.TryFallbackHalt:
 		result += " ! " + formatCommand(cmd.Fallback)
 	}
-	
+
 	return result + "\n"
 }
 

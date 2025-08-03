@@ -23,12 +23,12 @@ func (v Value) List() []string {
 }
 
 type Scope struct {
-	Variables         map[string]Value
-	Functions         map[string]*Block
-	Data              map[string]map[string]Value
-	Namespaces        map[string]map[string]*Block // Imported namespaces
-	CurrentNamespace  string                       // Current namespace context for function calls
-	Parent            *Scope
+	Variables        map[string]Value
+	Functions        map[string]*Block
+	Data             map[string]map[string]Value
+	Namespaces       map[string]map[string]*Block // Imported namespaces
+	CurrentNamespace string                       // Current namespace context for function calls
+	Parent           *Scope
 }
 
 func NewScope() *Scope {
@@ -69,15 +69,15 @@ type HaltType int
 const (
 	NoHalt HaltType = iota
 	BreakHalt
-	ContinueHalt  
+	ContinueHalt
 	ReturnHalt
 	ExitHalt
 )
 
 type Result struct {
 	Status   int
-	Halt     bool      // Kept for backward compatibility
-	HaltType HaltType  // More specific halt reason
+	Halt     bool     // Kept for backward compatibility
+	HaltType HaltType // More specific halt reason
 	Error    error
 }
 
@@ -403,7 +403,7 @@ func (e *Evaluator) evalFor(block *Block) Result {
 				}
 			}
 		}
-		nextIteration:
+	nextIteration:
 	}
 
 	return Result{Status: 0}
@@ -493,7 +493,7 @@ func (e *Evaluator) evalWhile(block *Block) Result {
 				}
 			}
 		}
-		nextIteration:
+	nextIteration:
 	}
 
 	return Result{Status: 0}
@@ -511,7 +511,7 @@ func (e *Evaluator) callFunctionWithNamespace(fn *Block, args []string, namespac
 	for name, dataMap := range rootScope.Data {
 		childScope.Data[name] = dataMap
 	}
-	
+
 	// Set the current namespace context
 	childScope.CurrentNamespace = namespace
 
@@ -923,13 +923,14 @@ func (e *Evaluator) evalExpression(expr Expr) (Value, error) {
 		}
 
 		if v.Index != nil {
-			if *v.Index == "*" {
+			expandedIndex := e.expandVariables(*v.Index)
+			if expandedIndex == "*" {
 				return val, nil
 			}
-			idx, err := strconv.Atoi(*v.Index)
+			idx, err := strconv.Atoi(expandedIndex)
 			if err != nil {
 				return Value{}, &BoxError{
-					Message: fmt.Sprintf("invalid array index: %s", *v.Index),
+					Message: fmt.Sprintf("invalid array index: %s", expandedIndex),
 				}
 			}
 			if idx < 0 || idx >= len(val) {

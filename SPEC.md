@@ -8,7 +8,7 @@ BOX - shell.
 | Lists everywhere                  | Every variable is a **list of strings**; no implicit word-splitting.         |
 | One postcard of grammar           | Only 13 token kinds; every block ends with `end`.                            |
 | Fail-fast by default              | Any non-zero exit aborts the current scope unless the command ends with `?`. |
-| Extensible by verbs, never syntax | New power arrives as **built-ins** written in C; the grammar never changes.  |
+| Extensible by verbs, never syntax | New power arrives as **built-ins** the grammar never changes.  |
 
 
 inspired by plan9 rc but with make-style determinstic behaviour

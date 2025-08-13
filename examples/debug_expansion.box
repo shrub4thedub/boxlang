@@ -1,0 +1,6 @@
+[main]
+  set testvar "hello"
+  echo "Test: ${testvar}/world"
+  set combined "${testvar}/world"
+  echo "Combined: ${combined}"
+end

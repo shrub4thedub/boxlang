@@ -1,0 +1,8 @@
+[main]
+  env HOME
+  echo "Direct access: ${_env_result}"
+  set myvar ${_env_result}
+  echo "After set: ${myvar}"
+  set concatenated ${_env_result}/.local/bin  
+  echo "Concatenated: ${concatenated}"
+end

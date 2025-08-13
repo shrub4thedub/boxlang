@@ -1,0 +1,14 @@
+[main]
+  env HOME
+  set home ${_env_result}
+  set edith_path "${home}/.local/bin/edith"
+  
+  if exists ${edith_path}
+    echo "✓ edith binary exists at ${edith_path}"
+    run ls -la ${edith_path}
+    run file ${edith_path}
+  else
+    echo "✗ edith binary not found at ${edith_path}"
+    exit 1
+  end
+end

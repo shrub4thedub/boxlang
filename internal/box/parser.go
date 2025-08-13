@@ -567,7 +567,8 @@ func (p *ParticleParser) parseBodyTokens(tokens []lexer.Token) []interface{} {
 		
 		// Check for control structures
 		if tokens[i].Type == boxLexer.Symbols()["Word"] && 
-		   (tokens[i].Value == "while" || tokens[i].Value == "if" || tokens[i].Value == "for") {
+		   (tokens[i].Value == "while" || tokens[i].Value == "if" || tokens[i].Value == "for" || 
+		    tokens[i].Value == "elif" || tokens[i].Value == "else") {
 			// Parse control structure
 			controlBlock, newIndex := p.parseControlStructureTokens(tokens, i)
 			result = append(result, *controlBlock)

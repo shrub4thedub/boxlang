@@ -1,0 +1,8 @@
+[main]
+  set home "/home/shrub"
+  echo "home: ${home}"
+  set bindir "${home}/.local/bin"
+  echo "bindir: ${bindir}"
+  set literal "hello/.local/bin"
+  echo "literal: ${literal}"
+end

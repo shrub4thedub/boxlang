@@ -1,0 +1,6 @@
+[main]
+  env HOME
+  set home ${_env_result}
+  set bindir ${home}/.local/bin
+  run ls -la ${bindir}/edith
+end

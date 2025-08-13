@@ -1,0 +1,10 @@
+[main]
+  env HOME
+  echo "HOME result: ${_env_result}"
+  set home ${_env_result}
+  echo "home var: ${home}"
+  set bindir ${home}/.local/bin
+  echo "bindir var: ${bindir}"
+  set target ${bindir}/edith
+  echo "target var: ${target}"
+end

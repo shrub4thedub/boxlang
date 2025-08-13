@@ -1,0 +1,7 @@
+[main]
+  env HOME
+  echo "Trying with quotes..."
+  set home ${_env_result}
+  set bindir "${home}/.local/bin"
+  echo "Quoted result: '${bindir}'"
+end

@@ -240,7 +240,7 @@ func (e *Evaluator) evalBlock(block *Block) Result {
 
 func (e *Evaluator) evalControlStructure(block *Block) Result {
 	switch block.Label {
-	case "if":
+	case "if", "elif":
 		return e.evalIf(block)
 	case "for":
 		return e.evalFor(block)
@@ -281,8 +281,8 @@ func (e *Evaluator) evalIf(block *Block) Result {
 	// If condition succeeds (status 0), execute if body
 	if condResult.Status == 0 {
 		for _, item := range block.Body {
-			if nestedBlock, ok := item.(Block); ok && nestedBlock.Label == "else" {
-				break // Skip else block
+			if nestedBlock, ok := item.(Block); ok && (nestedBlock.Label == "else" || nestedBlock.Label == "elif") {
+				break // Skip else/elif blocks
 			}
 
 			switch v := item.(type) {
@@ -305,7 +305,7 @@ func (e *Evaluator) evalIf(block *Block) Result {
 					return result
 				}
 			case Block:
-				if v.Label != "else" {
+				if v.Label != "else" && v.Label != "elif" {
 					result := e.evalControlStructure(&v)
 					if result.Error != nil {
 						return result
@@ -318,7 +318,15 @@ func (e *Evaluator) evalIf(block *Block) Result {
 			}
 		}
 	} else {
-		// Execute else block if condition failed
+		// Check for elif blocks first, then else block
+		for _, item := range block.Body {
+			if elifBlock, ok := item.(Block); ok && elifBlock.Label == "elif" {
+				// Execute elif as a new if statement
+				return e.evalIf(&elifBlock)
+			}
+		}
+		
+		// Execute else block if condition failed and no elif matched
 		for _, item := range block.Body {
 			if elseBlock, ok := item.(Block); ok && elseBlock.Label == "else" {
 				return e.evalBlock(&elseBlock)

@@ -1,0 +1,14 @@
+[main]
+  # Exact same sequence as the install script
+  env HOME
+  echo "Step 1 - env result: '${_env_result}'"
+  set home ${_env_result}
+  echo "Step 2 - home var: '${home}'"
+  set bindir ${home}/.local/bin  
+  echo "Step 3 - bindir var: '${bindir}'"
+  
+  # Let's also try without the intermediate variable
+  env HOME  
+  set bindir_direct ${_env_result}/.local/bin
+  echo "Step 4 - direct bindir: '${bindir_direct}'"
+end

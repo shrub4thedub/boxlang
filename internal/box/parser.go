@@ -657,15 +657,70 @@ func (p *ParticleParser) createCmd(tokens []lexer.Token) *Cmd {
 		Column:      tokens[0].Pos.Column,
 	}
 	
-	// Parse arguments
-	for _, token := range tokens[1:] {
-		expr := p.createExpr(token)
-		if expr != nil {
-			cmd.Args = append(cmd.Args, expr)
+	// Parse arguments - group consecutive tokens that should be concatenated
+	argTokens := tokens[1:]
+	i := 0
+	for i < len(argTokens) {
+		// Collect consecutive non-whitespace tokens into a single argument
+		var argGroup []lexer.Token
+		
+		// Add the current token
+		argGroup = append(argGroup, argTokens[i])
+		i++
+		
+		// Check if the next tokens are adjacent (no space between them in source)
+		for i < len(argTokens) {
+			currentToken := argTokens[i-1]
+			nextToken := argTokens[i]
+			
+			// If tokens are adjacent in the source (no space between them),
+			// they should be part of the same argument
+			if currentToken.Pos.Line == nextToken.Pos.Line &&
+				currentToken.Pos.Column+len(currentToken.Value) == nextToken.Pos.Column {
+				argGroup = append(argGroup, nextToken)
+				i++
+			} else {
+				break
+			}
+		}
+		
+		// Create a single expression from the grouped tokens
+		if len(argGroup) == 1 {
+			// Single token - use existing logic
+			expr := p.createExpr(argGroup[0])
+			if expr != nil {
+				cmd.Args = append(cmd.Args, expr)
+			}
+		} else {
+			// Multiple adjacent tokens - create a compound expression
+			expr := p.createCompoundExpr(argGroup)
+			if expr != nil {
+				cmd.Args = append(cmd.Args, expr)
+			}
 		}
 	}
 	
 	return cmd
+}
+
+// createCompoundExpr creates a single expression from multiple adjacent tokens
+func (p *ParticleParser) createCompoundExpr(tokens []lexer.Token) Expr {
+	if len(tokens) == 0 {
+		return nil
+	}
+	if len(tokens) == 1 {
+		return p.createExpr(tokens[0])
+	}
+	
+	// Combine all tokens into a single literal expression that will be
+	// expanded during evaluation. This preserves the variable expansion
+	// behavior while treating adjacent tokens as one argument.
+	var combined strings.Builder
+	for _, token := range tokens {
+		combined.WriteString(token.Value)
+	}
+	
+	return &LiteralExpr{Value: combined.String()}
 }
 
 // createExpr creates an Expr from a token

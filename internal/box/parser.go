@@ -488,7 +488,9 @@ func (p *ParticleParser) parseBlock(tokens []lexer.Token, startIndex int) (*Bloc
 		if token.Type == boxLexer.Symbols()["BlockStart"] {
 			blockDepth++
 		} else if token.Type == boxLexer.Symbols()["Word"] && 
-		          (token.Value == "while" || token.Value == "if" || token.Value == "for") {
+		          (token.Value == "while" || token.Value == "if" || token.Value == "for") &&
+		          (block.Type == FuncBlock || block.Type == MainBlock) {
+			// Only track control structures in function/main blocks, not data blocks
 			controlDepth++
 		} else if token.Type == boxLexer.Symbols()["BlockEnd"] {
 			if controlDepth > 0 {

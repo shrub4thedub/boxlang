@@ -14,6 +14,7 @@ func main() {
 		fmt.Println("  box <script.box> [args...]  - Run a box script")
 		fmt.Println("  box lex <script.box>        - Debug lexer output")
 		fmt.Println("  box ast <script.box>        - Debug parser AST")
+		fmt.Println("  box update                  - Update box interpreter")
 		os.Exit(1)
 	}
 
@@ -32,6 +33,11 @@ func main() {
 			os.Exit(1)
 		}
 		astDebug(os.Args[2])
+		return
+	}
+
+	if os.Args[1] == "update" {
+		updateBox()
 		return
 	}
 
@@ -327,4 +333,25 @@ func showRawTokens(filename, content string) {
 	
 	fmt.Println("─────────────────────────────────────────────────────────────────")
 	fmt.Printf("✅ Lexed %d tokens\n", tokenCount)
+}
+
+func updateBox() {
+	fmt.Println("box update: updating the box interpreter")
+	fmt.Println("")
+	fmt.Println("for the best box update experience, consider using the pack package manager:")
+	fmt.Println("")
+	fmt.Println("  pack open boxlang    # install/update box via pack")
+	fmt.Println("  pack update          # update all pack-managed packages")
+	fmt.Println("")
+	fmt.Println("pack provides:")
+	fmt.Println("  • cryptographic signature verification")
+	fmt.Println("  • automatic dependency management")
+	fmt.Println("  • clean uninstallation")
+	fmt.Println("  • version tracking and rollback")
+	fmt.Println("")
+	fmt.Println("get pack at: https://github.com/shrub4thedub/pack")
+	fmt.Println("")
+	fmt.Println("alternatively, to update box manually:")
+	fmt.Println("  git clone https://github.com/shrub4thedub/boxlang.git")
+	fmt.Println("  cd boxlang && go build -o box cmd/box/main.go")
 }

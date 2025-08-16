@@ -918,6 +918,80 @@ func (e *Evaluator) evalExpression(expr Expr) (Value, error) {
 		return Value{expanded}, nil
 
 	case *VariableExpr:
+		// Handle data block lookups like lock.installed_to or package.lock.installed_to
+		if strings.Contains(v.Name, ".") {
+			parts := strings.Split(v.Name, ".")
+			if len(parts) >= 2 {
+				if len(parts) == 2 {
+					// Simple case: block.field
+					blockName := parts[0]
+					fieldName := parts[1]
+
+					scope := e.scope
+					for scope != nil {
+						if block, ok := scope.Data[blockName]; ok {
+							if val, ok := block[fieldName]; ok {
+								// Apply index if present
+								if v.Index != nil {
+									expandedIndex := e.expandVariables(*v.Index)
+									if expandedIndex == "*" {
+										return val, nil
+									}
+									idx, err := strconv.Atoi(expandedIndex)
+									if err != nil {
+										return Value{}, &BoxError{
+											Message: fmt.Sprintf("invalid array index: %s", expandedIndex),
+										}
+									}
+									if idx < 0 || idx >= len(val) {
+										return Value{}, nil
+									}
+									return Value{val[idx]}, nil
+								}
+								return val, nil
+							}
+						}
+						scope = scope.Parent
+					}
+				} else if len(parts) == 3 {
+					// Namespaced case: namespace.block.field
+					namespace := parts[0]
+					blockName := parts[1]
+					fieldName := parts[2]
+
+					// Look for namespaced data block
+					namespacedBlockName := namespace + "." + blockName
+					scope := e.scope
+					for scope != nil {
+						if block, ok := scope.Data[namespacedBlockName]; ok {
+							if val, ok := block[fieldName]; ok {
+								// Apply index if present
+								if v.Index != nil {
+									expandedIndex := e.expandVariables(*v.Index)
+									if expandedIndex == "*" {
+										return val, nil
+									}
+									idx, err := strconv.Atoi(expandedIndex)
+									if err != nil {
+										return Value{}, &BoxError{
+											Message: fmt.Sprintf("invalid array index: %s", expandedIndex),
+										}
+									}
+									if idx < 0 || idx >= len(val) {
+										return Value{}, nil
+									}
+									return Value{val[idx]}, nil
+								}
+								return val, nil
+							}
+						}
+						scope = scope.Parent
+					}
+				}
+			}
+		}
+
+		// Fall back to regular variable lookup
 		val, ok := e.scope.Get(v.Name)
 		if !ok {
 			return Value{}, &BoxError{

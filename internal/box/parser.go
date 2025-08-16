@@ -373,16 +373,27 @@ func (p *ParticleParser) processImport(program *Program, importStmt *ImportStmt)
 		namespace = parts[len(parts)-1]
 	}
 	
-	// Construct full file path
+	// Construct full file path - try both with and without .box extension
 	var filePath string
+	var content []byte
+	var err error
+	
 	if strings.HasSuffix(importStmt.Path, ".box") {
+		// Use path as-is if it already has .box extension
 		filePath = importStmt.Path
+		content, err = os.ReadFile(filePath)
 	} else {
-		filePath = importStmt.Path + ".box"
+		// Try without .box extension first
+		filePath = importStmt.Path
+		content, err = os.ReadFile(filePath)
+		
+		// If that fails, try with .box extension
+		if err != nil {
+			filePath = importStmt.Path + ".box"
+			content, err = os.ReadFile(filePath)
+		}
 	}
 	
-	// Read the imported file
-	content, err := os.ReadFile(filePath)
 	if err != nil {
 		return &BoxError{
 			Message: fmt.Sprintf("failed to read import file '%s': %v", filePath, err),

@@ -1,0 +1,9 @@
+[fn test]
+  if exists /tmp
+    echo "tmp exists"
+  end
+  
+  for item in a b c
+    echo ${item}
+  end
+end

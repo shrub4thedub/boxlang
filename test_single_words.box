@@ -1,0 +1,5 @@
+[data -c pkg]
+  name     crystal-orb
+  desc     bot
+  ver      latest
+end

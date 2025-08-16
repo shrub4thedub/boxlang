@@ -1,0 +1,4 @@
+[data -c pkg]
+  name     crystal-orb
+  desc     Discord bot
+end

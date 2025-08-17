@@ -1,6 +1,0 @@
-a
-Hello World
-This is a test
-.
-w
-q

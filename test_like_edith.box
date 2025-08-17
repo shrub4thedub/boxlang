@@ -1,4 +1,0 @@
-[data -c pkg]
-  name     crystal-orb
-  desc     a text editing interface
-end

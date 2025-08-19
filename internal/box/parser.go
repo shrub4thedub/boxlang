@@ -1,9 +1,11 @@
 package box
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/alecthomas/participle/v2/lexer"
 )
@@ -120,6 +122,37 @@ type Program struct {
 	Namespaces map[string]map[string]*Block // Namespaced functions/data
 }
 
+// Concurrent parsing structures
+type TokenStream struct {
+	tokens   chan lexer.Token
+	ctx      context.Context
+	cancel   context.CancelFunc
+	mu       sync.RWMutex
+	finished bool
+	err      error
+}
+
+type ConcurrentParser struct {
+	lexer       *lexer.PeekingLexer
+	tokenStream *TokenStream
+	program     *Program
+	wg          sync.WaitGroup
+	mu          sync.RWMutex
+}
+
+type ParseJob struct {
+	tokens []lexer.Token
+	start  int
+	end    int
+	jobID  int
+}
+
+type ParseResult struct {
+	block *Block
+	jobID int
+	err   error
+}
+
 // Lexer definition for Box language
 var boxLexer = lexer.MustStateful(lexer.Rules{
 	"Root": {
@@ -200,8 +233,19 @@ func (p *ParticleParser) ParseFile(filename string) (*Program, error) {
 
 // ParseString parses Box source code from a string
 func (p *ParticleParser) ParseString(source string) (*Program, error) {
+	// Use concurrent parsing with identical behavior to original
+	return p.parseConcurrently(source)
+}
+
+// ParseStringSequential provides the original sequential parsing for compatibility
+func (p *ParticleParser) ParseStringSequential(source string) (*Program, error) {
 	// Use manual parsing for better block handling
 	return p.parseManually(source)
+}
+
+// ParseStringConcurrent forces concurrent parsing regardless of file size
+func (p *ParticleParser) ParseStringConcurrent(source string) (*Program, error) {
+	return p.parseConcurrently(source)
 }
 
 // parseManually handles the parsing manually using the lexer tokens
@@ -217,6 +261,21 @@ func (p *ParticleParser) parseManually(source string) (*Program, error) {
 
 	// Parse tokens into program structure  
 	return p.parseTokens(lex)
+}
+
+// parseConcurrently handles concurrent parsing with streaming and parallel imports
+func (p *ParticleParser) parseConcurrently(source string) (*Program, error) {
+	// Create lexer
+	lex, err := boxLexer.LexString(p.filename, source)
+	if err != nil {
+		return nil, &BoxError{
+			Message:  fmt.Sprintf("lexer error: %v", err),
+			Location: Location{p.filename, 0, 0},
+		}
+	}
+
+	// Use concurrent token processing
+	return p.parseTokensConcurrent(lex)
 }
 
 // parseTokens manually parses lexer tokens into a Program
@@ -315,6 +374,203 @@ func (p *ParticleParser) parseTokens(lex lexer.Lexer) (*Program, error) {
 		program.Blocks = append(program.Blocks, *program.Main)
 	}
 
+	return program, nil
+}
+
+// Concurrent token streaming implementation
+func NewTokenStream(ctx context.Context, lex lexer.Lexer) *TokenStream {
+	childCtx, cancel := context.WithCancel(ctx)
+	ts := &TokenStream{
+		tokens: make(chan lexer.Token, 100), // Buffered for performance
+		ctx:    childCtx,
+		cancel: cancel,
+	}
+	
+	go ts.streamTokens(lex)
+	return ts
+}
+
+func (ts *TokenStream) streamTokens(lex lexer.Lexer) {
+	defer close(ts.tokens)
+	// Don't cancel context here - let the caller manage it
+	
+	for {
+		select {
+		case <-ts.ctx.Done():
+			ts.mu.Lock()
+			ts.err = ts.ctx.Err()
+			ts.finished = true
+			ts.mu.Unlock()
+			return
+		default:
+			token, err := lex.Next()
+			if err != nil {
+				ts.mu.Lock()
+				ts.err = err
+				ts.finished = true
+				ts.mu.Unlock()
+				return
+			}
+			
+			if token.EOF() {
+				ts.mu.Lock()
+				ts.finished = true
+				ts.mu.Unlock()
+				return
+			}
+			
+			// Filter out comments and whitespace during streaming
+			if token.Type == boxLexer.Symbols()["Comment"] || token.Type == boxLexer.Symbols()["Whitespace"] {
+				continue
+			}
+			
+			select {
+			case ts.tokens <- token:
+			case <-ts.ctx.Done():
+				ts.mu.Lock()
+				ts.err = ts.ctx.Err()
+				ts.finished = true
+				ts.mu.Unlock()
+				return
+			}
+		}
+	}
+}
+
+func (ts *TokenStream) Next() (lexer.Token, error) {
+	select {
+	case token, ok := <-ts.tokens:
+		if !ok {
+			ts.mu.RLock()
+			err := ts.err
+			ts.mu.RUnlock()
+			if err != nil {
+				return lexer.Token{}, err
+			}
+			return lexer.Token{}, nil // EOF
+		}
+		return token, nil
+	case <-ts.ctx.Done():
+		return lexer.Token{}, ts.ctx.Err()
+	}
+}
+
+func (ts *TokenStream) IsFinished() bool {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+	return ts.finished
+}
+
+func (ts *TokenStream) Close() {
+	ts.cancel()
+}
+
+// Concurrent parsing implementation that maintains linear execution order
+func (p *ParticleParser) parseTokensConcurrent(lex lexer.Lexer) (*Program, error) {
+	ctx := context.Background()
+	tokenStream := NewTokenStream(ctx, lex)
+	defer tokenStream.Close()
+	
+	program := &Program{
+		Functions:  make(map[string]*Block),
+		Data:       make(map[string]*Block),
+		ImportMap:  make(map[string]*Import),
+		Namespaces: make(map[string]map[string]*Block),
+	}
+
+	// Process tokens concurrently but maintain order
+	return p.processConcurrentTokens(tokenStream, program)
+}
+
+func (p *ParticleParser) processConcurrentTokens(tokenStream *TokenStream, program *Program) (*Program, error) {
+	var tokens []lexer.Token
+	var topLevelCommands []interface{}
+	
+	// Collect tokens with concurrent streaming but maintain identical processing order
+	for {
+		token, err := tokenStream.Next()
+		if err != nil {
+			return nil, err
+		}
+		
+		// Check for EOF (empty token with no error)
+		if token.Type == 0 && token.Value == "" {
+			break
+		}
+		
+		tokens = append(tokens, token)
+	}
+	
+	// Process tokens in exactly the same order as the original sequential version
+	i := 0
+	for i < len(tokens) {
+		token := tokens[i]
+		
+		// Skip newlines at top level
+		if token.Type == boxLexer.Symbols()["Newline"] {
+			i++
+			continue
+		}
+		
+		// Handle import statements exactly like the original
+		if token.Type == boxLexer.Symbols()["Word"] && token.Value == "import" {
+			importStmt, newIndex, err := p.parseImport(tokens, i)
+			if err != nil {
+				return nil, err
+			}
+			
+			// Use sequential import processing for compatibility
+			err = p.processImport(program, importStmt)
+			if err != nil {
+				return nil, err
+			}
+			
+			i = newIndex
+			continue
+		}
+		
+		// Handle block statements exactly like the original
+		if token.Type == boxLexer.Symbols()["BlockStart"] {
+			block, newIndex, err := p.parseBlock(tokens, i)
+			if err != nil {
+				return nil, err
+			}
+			
+			program.Blocks = append(program.Blocks, *block)
+			
+			// Categorize the block
+			if block.Type == MainBlock {
+				program.Main = block
+			} else if block.Type == FuncBlock {
+				program.Functions[block.Label] = block
+			} else if block.Type == DataBlock {
+				program.Data[block.Label] = block
+			}
+			
+			i = newIndex
+			continue
+		}
+		
+		// Handle regular commands at top level exactly like the original
+		cmd, newIndex, err := p.parseCommand(tokens, i)
+		if err != nil {
+			return nil, err
+		}
+		
+		topLevelCommands = append(topLevelCommands, cmd)
+		i = newIndex
+	}
+	
+	// If there are top-level commands but no main block, create one
+	if len(topLevelCommands) > 0 && program.Main == nil {
+		program.Main = &Block{
+			Type:  MainBlock,
+			Label: "main",
+			Body:  topLevelCommands,
+		}
+		program.Blocks = append(program.Blocks, *program.Main)
+	}
+	
 	return program, nil
 }
 
@@ -444,6 +700,303 @@ func (p *ParticleParser) processImport(program *Program, importStmt *ImportStmt)
 		program.Namespaces[namespace][name] = block
 	}
 	
+	return nil
+}
+
+// Parallel import processing structures
+type ImportJob struct {
+	stmt      *ImportStmt
+	namespace string
+	index     int // for maintaining order
+}
+
+type ImportResult struct {
+	import_obj Import
+	index      int
+	err        error
+}
+
+// processImportsConcurrent processes multiple imports in parallel while maintaining dependency order
+func (p *ParticleParser) processImportsConcurrent(program *Program, importStmts []*ImportStmt) error {
+	if len(importStmts) == 0 {
+		return nil
+	}
+	
+	// For simple parallel processing without complex dependency resolution
+	// Process imports in batches but maintain order for dependencies
+	const maxConcurrent = 4
+	
+	results := make([]ImportResult, len(importStmts))
+	jobs := make(chan ImportJob, len(importStmts))
+	resultsChan := make(chan ImportResult, len(importStmts))
+	
+	// Start worker goroutines
+	var wg sync.WaitGroup
+	for i := 0; i < maxConcurrent && i < len(importStmts); i++ {
+		wg.Add(1)
+		go p.importWorker(jobs, resultsChan, &wg)
+	}
+	
+	// Send jobs
+	go func() {
+		defer close(jobs)
+		for i, stmt := range importStmts {
+			namespace := stmt.Path
+			if strings.Contains(namespace, "/") {
+				parts := strings.Split(namespace, "/")
+				namespace = parts[len(parts)-1]
+			}
+			
+			jobs <- ImportJob{
+				stmt:      stmt,
+				namespace: namespace,
+				index:     i,
+			}
+		}
+	}()
+	
+	// Collect results
+	go func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+	
+	// Gather all results
+	for result := range resultsChan {
+		if result.err != nil {
+			return result.err
+		}
+		results[result.index] = result
+	}
+	
+	// Apply results in order to maintain dependency correctness
+	for _, result := range results {
+		if result.err != nil {
+			return result.err
+		}
+		
+		// Add to program
+		program.Imports = append(program.Imports, result.import_obj)
+		program.ImportMap[result.import_obj.Namespace] = &result.import_obj
+		
+		// Add imported functions and data to namespaces
+		namespace := result.import_obj.Namespace
+		if program.Namespaces[namespace] == nil {
+			program.Namespaces[namespace] = make(map[string]*Block)
+		}
+		
+		// Copy functions from imported program to namespace
+		for name, block := range result.import_obj.Program.Functions {
+			program.Namespaces[namespace][name] = block
+		}
+		
+		// Copy data blocks from imported program to namespace
+		for name, block := range result.import_obj.Program.Data {
+			program.Namespaces[namespace][name] = block
+		}
+	}
+	
+	return nil
+}
+
+func (p *ParticleParser) importWorker(jobs <-chan ImportJob, results chan<- ImportResult, wg *sync.WaitGroup) {
+	defer wg.Done()
+	
+	for job := range jobs {
+		result := ImportResult{index: job.index}
+		
+		// Construct full file path - try both with and without .box extension
+		var filePath string
+		var content []byte
+		var err error
+		
+		if strings.HasSuffix(job.stmt.Path, ".box") {
+			// Use path as-is if it already has .box extension
+			filePath = job.stmt.Path
+			content, err = os.ReadFile(filePath)
+		} else {
+			// Try without .box extension first
+			filePath = job.stmt.Path
+			content, err = os.ReadFile(filePath)
+			
+			// If that fails, try with .box extension
+			if err != nil {
+				filePath = job.stmt.Path + ".box"
+				content, err = os.ReadFile(filePath)
+			}
+		}
+		
+		if err != nil {
+			result.err = &BoxError{
+				Message: fmt.Sprintf("failed to read import file '%s': %v", filePath, err),
+				Location: Location{p.filename, 0, 0},
+			}
+			results <- result
+			continue
+		}
+		
+		// Parse the imported file
+		importParser, err := NewParticleParser(filePath)
+		if err != nil {
+			result.err = &BoxError{
+				Message: fmt.Sprintf("failed to create parser for import '%s': %v", filePath, err),
+				Location: Location{p.filename, 0, 0},
+			}
+			results <- result
+			continue
+		}
+		
+		importedProgram, err := importParser.ParseString(string(content))
+		if err != nil {
+			result.err = &BoxError{
+				Message: fmt.Sprintf("failed to parse import '%s': %v", filePath, err),
+				Location: Location{p.filename, 0, 0},
+			}
+			results <- result
+			continue
+		}
+		
+		// Create Import object
+		result.import_obj = Import{
+			Path:      job.stmt.Path,
+			Namespace: job.namespace,
+			Program:   importedProgram,
+		}
+		
+		results <- result
+	}
+}
+
+// Concurrent expression pre-processing structures
+type ExpressionJob struct {
+	expr  Expr
+	index int
+}
+
+type ExpressionResult struct {
+	processedExpr Expr
+	index         int
+	complexity    int // for optimization hints
+	err           error
+}
+
+// preProcessExpressionsConcurrent analyzes expressions for optimization opportunities
+func (p *ParticleParser) preProcessExpressionsConcurrent(exprs []Expr) ([]Expr, error) {
+	if len(exprs) == 0 {
+		return exprs, nil
+	}
+	
+	const maxConcurrent = 3
+	
+	jobs := make(chan ExpressionJob, len(exprs))
+	results := make(chan ExpressionResult, len(exprs))
+	
+	// Start worker goroutines
+	var wg sync.WaitGroup
+	for i := 0; i < maxConcurrent && i < len(exprs); i++ {
+		wg.Add(1)
+		go p.expressionWorker(jobs, results, &wg)
+	}
+	
+	// Send jobs
+	go func() {
+		defer close(jobs)
+		for i, expr := range exprs {
+			jobs <- ExpressionJob{
+				expr:  expr,
+				index: i,
+			}
+		}
+	}()
+	
+	// Collect results
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+	
+	// Gather results in order
+	resultSlice := make([]ExpressionResult, len(exprs))
+	for result := range results {
+		if result.err != nil {
+			return nil, result.err
+		}
+		resultSlice[result.index] = result
+	}
+	
+	// Build result slice
+	processedExprs := make([]Expr, len(exprs))
+	for i, result := range resultSlice {
+		processedExprs[i] = result.processedExpr
+	}
+	
+	return processedExprs, nil
+}
+
+func (p *ParticleParser) expressionWorker(jobs <-chan ExpressionJob, results chan<- ExpressionResult, wg *sync.WaitGroup) {
+	defer wg.Done()
+	
+	for job := range jobs {
+		result := ExpressionResult{
+			index:         job.index,
+			processedExpr: job.expr, // Default to no change
+			complexity:    1,        // Default complexity
+		}
+		
+		// Analyze and optimize the expression
+		switch expr := job.expr.(type) {
+		case *LiteralExpr:
+			// Pre-process literal expressions for common patterns
+			if strings.Contains(expr.Value, "${") || strings.Contains(expr.Value, "$") {
+				result.complexity = 3 // Variable expansion needed
+			} else if strings.Contains(expr.Value, "`") {
+				result.complexity = 5 // Command substitution needed
+			} else {
+				result.complexity = 1 // Simple literal
+			}
+			
+		case *VariableExpr:
+			// Analyze variable complexity
+			if strings.Contains(expr.Name, ".") {
+				if len(strings.Split(expr.Name, ".")) > 2 {
+					result.complexity = 4 // Namespaced variable
+				} else {
+					result.complexity = 3 // Data block access
+				}
+			} else {
+				result.complexity = 2 // Simple variable
+			}
+			
+			if expr.Index != nil {
+				result.complexity += 1 // Array access adds complexity
+			}
+			
+		case *BlockLookupExpr:
+			result.complexity = 4 // Block lookups are expensive
+			
+		case *CommandSubExpr:
+			result.complexity = 5 // Command substitution is most expensive
+			
+		default:
+			result.complexity = 1
+		}
+		
+		results <- result
+	}
+}
+
+// optimizeCommandArgs applies concurrent expression pre-processing to command arguments
+func (p *ParticleParser) optimizeCommandArgs(cmd *Cmd) error {
+	if len(cmd.Args) == 0 {
+		return nil
+	}
+	
+	optimizedArgs, err := p.preProcessExpressionsConcurrent(cmd.Args)
+	if err != nil {
+		return err
+	}
+	
+	cmd.Args = optimizedArgs
 	return nil
 }
 

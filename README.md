@@ -21,7 +21,7 @@ pack open boxlang
 # if you don't have pack yet
 git clone https://github.com/shrub4thedub/pack.git
 cd pack
-./pack bootstrap
+./pack open pack
 #(this installs box too)
 ```
 
